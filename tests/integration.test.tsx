@@ -1,0 +1,65 @@
+import assert from 'node:assert/strict';
+import {registerHooks} from 'node:module';
+registerHooks({load(url,context,next){if(url.endsWith('.css'))return {format:'module',source:'export default {};',shortCircuit:true};return next(url,context);}});
+import test from 'node:test';
+import { Window } from 'happy-dom';
+import 'fake-indexeddb/auto';
+const window=new Window({url:'https://inkloop.test'});
+window.document.write('<!doctype html><html><head></head><body></body></html>');
+for(const name of ['window','document','HTMLElement','HTMLInputElement','HTMLTextAreaElement','HTMLCanvasElement','HTMLDialogElement','HTMLButtonElement','Event','MouseEvent','PointerEvent','File','Blob','navigator','location','requestAnimationFrame','cancelAnimationFrame']) {
+ const value=(window as unknown as Record<string,unknown>)[name];
+ Object.defineProperty(globalThis,name,{value:typeof value==='function'&&['requestAnimationFrame','cancelAnimationFrame'].includes(name)?value.bind(window):value,configurable:true,writable:true});
+}
+Object.defineProperty(globalThis,'IS_REACT_ACT_ENVIRONMENT',{value:true,configurable:true});
+Object.defineProperty(globalThis,'BroadcastChannel',{value:undefined,configurable:true});
+const no=()=>{};
+const ctx={clearRect:no,save:no,restore:no,beginPath:no,arc:no,fill:no,stroke:no,moveTo:no,lineTo:no,translate:no,scale:no,fillRect:no,fillText:no,measureText:(s:string)=>({width:s.length*8})};
+window.HTMLCanvasElement.prototype.getContext=function(){return ctx;} as never;
+window.HTMLCanvasElement.prototype.toBlob=function(callback:BlobCallback){callback(new Blob(['PNG'],{type:'image/png'}));};
+window.HTMLCanvasElement.prototype.getBoundingClientRect=function(){return {left:0,top:0,width:900,height:1200,right:900,bottom:1200,x:0,y:0,toJSON:no};};
+window.HTMLCanvasElement.prototype.setPointerCapture=no;
+window.HTMLCanvasElement.prototype.hasPointerCapture=()=>false;
+window.HTMLDialogElement.prototype.showModal=function(){this.setAttribute('open','');};
+window.HTMLDialogElement.prototype.close=function(){this.removeAttribute('open');};
+Object.defineProperty(URL,'createObjectURL',{value:()=> 'blob:inkloop-test',configurable:true});
+Object.defineProperty(URL,'revokeObjectURL',{value:no,configurable:true});
+const React=await import('react');
+const {act}=React;
+Object.defineProperty(globalThis,'React',{value:React,configurable:true});
+const {createRoot}=await import('react-dom/client');
+const {default:App}=await import('../src/App');
+const {initialData}=await import('../src/model');
+const {saveData,loadData}=await import('../src/storage');
+const delay=(ms:number)=>new Promise(resolve=>setTimeout(resolve,ms));
+const click=async(text:string)=>{const b=[...document.querySelectorAll('button')].find(b=>b.textContent?.trim()===text||b.getAttribute('aria-label')===text);assert.ok(b,`button ${text}`);await act(async()=>{b.click();await delay(20);});};
+const setInput=async(input:HTMLInputElement|HTMLTextAreaElement,value:string)=>{const prototype=input.tagName==='TEXTAREA'?window.HTMLTextAreaElement.prototype:window.HTMLInputElement.prototype;await act(async()=>{Object.getOwnPropertyDescriptor(prototype,'value')!.set!.call(input,value);input.dispatchEvent(new window.Event('input',{bubbles:true}));input.dispatchEvent(new window.Event('change',{bubbles:true}));});};
+const root=createRoot(document.body.appendChild(document.createElement('div')));
+
+test('complete notebook flow: draw, undo/redo, persist, submit snapshot, import answer and preserve original snapshots',async()=>{
+ const d=initialData();d.onboardingDone=true;await saveData(d);
+ await act(async()=>{root.render(<App/>);});
+ await act(async()=>{await delay(80);});
+ assert.ok(document.body.textContent?.includes('Mathematik'),document.body.textContent||'empty');
+ await click('Aufgabe einfügen');
+ const task=document.querySelector('dialog textarea') as HTMLTextAreaElement;
+ await setInput(task,'Solve x² = 9.');
+ await click('Aufgabe speichern');
+ assert.ok(document.body.textContent?.includes('Solve x² = 9.'));
+ const canvas=document.querySelector('[data-testid="ink-canvas"]')!;
+ const send=(type:string,x:number,y:number,pointerType='pen')=>canvas.dispatchEvent(new window.PointerEvent(type,{pointerId:1,pointerType,button:0,clientX:x,clientY:y,pressure:.6,bubbles:true}));
+ await act(async()=>{send('pointerdown',80,150);send('pointermove',130,170);send('pointermove',160,150);send('pointerup',160,150);await delay(450);});
+ let stored=(await loadData())!;assert.equal(stored.notebooks[0].pages[0].strokes.length,1);assert.equal(stored.notebooks[0].pages[0].task,'Solve x² = 9.');
+ await click('Rückgängig');await act(async()=>{await delay(400);});assert.equal((await loadData())!.notebooks[0].pages[0].strokes.length,0);
+ await click('Wiederholen');await act(async()=>{await delay(400);});assert.equal((await loadData())!.notebooks[0].pages[0].strokes.length,1);
+ await click('Antwort abgeben');await act(async()=>{await delay(400);});
+ assert.ok(document.body.textContent?.includes('Deine Lösung geht weiter.'));stored=(await loadData())!;assert.equal(stored.notebooks[0].pages[0].submissions.length,1);assert.equal(stored.notebooks[0].pages[0].submissions[0].strokes.length,1);
+ await click('KI-Antwort übernehmen');
+ await setInput(document.querySelector('dialog textarea') as HTMLTextAreaElement,JSON.stringify({transcription:'x = 3',feedback:'Also consider −3.',next_task:'Solve x² = 16.'}));
+ await click('Im Lernheft speichern');
+ await act(async()=>{await delay(450);});stored=(await loadData())!;assert.equal(stored.notebooks[0].pages[0].submissions[0].transcription,'x = 3');assert.equal(stored.notebooks[0].pages[0].submissions[0].feedback,'Also consider −3.');
+ await click('Feedback');await click('Auf neuer Seite lösen');await act(async()=>{await delay(450);});stored=(await loadData())!;assert.equal(stored.notebooks[0].pages.length,2);assert.equal(stored.notebooks[0].pages[1].task,'Solve x² = 16.');assert.equal(stored.notebooks[0].pages[1].strokes.length,0);assert.equal(stored.notebooks[0].pages[0].submissions[0].strokes.length,1);
+ // Finger contact cannot create ink in Pencil-only mode.
+ const fresh=document.querySelector('[data-testid="ink-canvas"]')!;
+ await act(async()=>{fresh.dispatchEvent(new window.PointerEvent('pointerdown',{pointerId:2,pointerType:'touch',button:0,clientX:40,clientY:50,bubbles:true}));fresh.dispatchEvent(new window.PointerEvent('pointerup',{pointerId:2,pointerType:'touch',button:0,clientX:40,clientY:50,bubbles:true}));await delay(400);});assert.equal((await loadData())!.notebooks[0].pages[1].strokes.length,0);
+ await act(async()=>{root.unmount();});await window.happyDOM.abort();
+});
