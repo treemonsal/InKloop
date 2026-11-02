@@ -1,32 +1,202 @@
-import test from 'node:test';
-import assert from 'node:assert/strict';
-import worker from '../worker/index.js';
+import test from "node:test";
+import assert from "node:assert/strict";
+import worker from "../worker/index.js";
 class Bucket {
- objects=new Map();
- async put(key,value){this.objects.set(key,typeof value==='string'?new TextEncoder().encode(value):new Uint8Array(value));}
- async get(key){const bytes=this.objects.get(key);return bytes?{json:async()=>JSON.parse(new TextDecoder().decode(bytes)),arrayBuffer:async()=>bytes.slice().buffer}:null;}
- async list({prefix,startAfter='',limit=1000}){return {objects:[...this.objects.keys()].filter(k=>k.startsWith(prefix)&&k>startAfter).sort().slice(0,limit).map(key=>({key}))};}
+  objects = new Map();
+  async put(key, value) {
+    this.objects.set(
+      key,
+      typeof value === "string"
+        ? new TextEncoder().encode(value)
+        : new Uint8Array(value),
+    );
+  }
+  async get(key) {
+    const bytes = this.objects.get(key);
+    return bytes
+      ? {
+          json: async () => JSON.parse(new TextDecoder().decode(bytes)),
+          arrayBuffer: async () => bytes.slice().buffer,
+        }
+      : null;
+  }
+  async list({ prefix, startAfter = "", limit = 1000 }) {
+    return {
+      objects: [...this.objects.keys()]
+        .filter((k) => k.startsWith(prefix) && k > startAfter)
+        .sort()
+        .slice(0, limit)
+        .map((key) => ({ key })),
+    };
+  }
 }
-const env={BUCKET:new Bucket()};
-const request=(path,method='GET',body,actor='alice',extra={})=>new Request('https://inkloop.test'+path,{method,headers:{...(actor?{'oai-authenticated-user-id':actor}:{}),...extra},...(body?{body}:{}),...(body instanceof ReadableStream?{duplex:'half'}:{})});
-const rpc=async(name,args={},actor='alice')=>(await worker.fetch(request('/mcp','POST',JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name,arguments:args}}),actor),env)).json();
-const submit=async(actor='alice')=>{const form=new FormData();form.set('metadata',JSON.stringify({id:'submission-1',notebookId:'math',pageId:'page-1',prompt:'Transcribe exactly.',task:'x² = 9',subject:'Mathematik',language:'de',createdAt:Date.now()}));form.set('image',new Blob([Uint8Array.from([137,80,78,71,13,10,26,10])],{type:'image/png'}),'answer.png');return worker.fetch(request('/api/bridge/submission','POST',form,actor),env);};
-test('authenticated workspace and submission transfer without cross-user access',async()=>{
- assert.equal((await worker.fetch(request('/api/bridge','GET',undefined,null),env)).status,401);
- assert.equal((await worker.fetch(request('/api/bridge','GET',undefined,'alice',{origin:'https://evil.example'}),env)).status,403);
- assert.equal((await worker.fetch(request('/api/bridge/workspace','PUT',JSON.stringify({activeNotebook:'math',notebooks:[{id:'math',name:'Mathematik',subject:'Mathematik',language:'de'}]})),env)).status,200);
- assert.equal((await submit()).status,200);
- const result=await rpc('inkloop_read_submission');assert.equal(result.result.content[1].type,'image');assert.equal(result.result.content[1].mimeType,'image/png');assert.equal(JSON.parse(result.result.content[0].text).task,'x² = 9');
- const other=await rpc('inkloop_read_submission',{submission_id:'submission-1'},'bob');assert.equal(other.result.isError,true);
+const env = { BUCKET: new Bucket() };
+const request = (path, method = "GET", body, actor = "alice", extra = {}) =>
+  new Request("https://inkloop.test" + path, {
+    method,
+    headers: {
+      ...(actor ? { "oai-authenticated-user-id": actor } : {}),
+      ...extra,
+    },
+    ...(body ? { body } : {}),
+    ...(body instanceof ReadableStream ? { duplex: "half" } : {}),
+  });
+const rpc = async (name, args = {}, actor = "alice") =>
+  (
+    await worker.fetch(
+      request(
+        "/mcp",
+        "POST",
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name, arguments: args },
+        }),
+        actor,
+      ),
+      env,
+    )
+  ).json();
+const submit = async (actor = "alice") => {
+  const form = new FormData();
+  form.set(
+    "metadata",
+    JSON.stringify({
+      id: "submission-1",
+      notebookId: "math",
+      pageId: "page-1",
+      prompt: "Transcribe exactly.",
+      task: "x² = 9",
+      subject: "Mathematik",
+      language: "de",
+      createdAt: Date.now(),
+    }),
+  );
+  form.set(
+    "image",
+    new Blob([Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10])], {
+      type: "image/png",
+    }),
+    "answer.png",
+  );
+  return worker.fetch(
+    request("/api/bridge/submission", "POST", form, actor),
+    env,
+  );
+};
+test("authenticated workspace and submission transfer without cross-user access", async () => {
+  assert.equal(
+    (await worker.fetch(request("/api/bridge", "GET", undefined, null), env))
+      .status,
+    401,
+  );
+  assert.equal(
+    (
+      await worker.fetch(
+        request("/api/bridge", "GET", undefined, "alice", {
+          origin: "https://evil.example",
+        }),
+        env,
+      )
+    ).status,
+    403,
+  );
+  assert.equal(
+    (
+      await worker.fetch(
+        request(
+          "/api/bridge/workspace",
+          "PUT",
+          JSON.stringify({
+            activeNotebook: "math",
+            notebooks: [
+              {
+                id: "math",
+                name: "Mathematik",
+                subject: "Mathematik",
+                language: "de",
+              },
+            ],
+          }),
+        ),
+        env,
+      )
+    ).status,
+    200,
+  );
+  assert.equal((await submit()).status, 200);
+  const result = await rpc("inkloop_read_submission");
+  assert.equal(result.result.content[1].type, "image");
+  assert.equal(result.result.content[1].mimeType, "image/png");
+  assert.equal(JSON.parse(result.result.content[0].text).task, "x² = 9");
+  const other = await rpc(
+    "inkloop_read_submission",
+    { submission_id: "submission-1" },
+    "bob",
+  );
+  assert.equal(other.result.isError, true);
 });
-test('MCP responses and tasks return to browser through stable cursor pagination',async()=>{
- const saved=await rpc('inkloop_write_response',{submission_id:'submission-1',transcription:'x = 3',feedback:'Und −3?',next_task:'x² = 16'});assert.ok(!saved.result.isError);
- const task=await rpc('inkloop_set_task',{task:'Differentiate x².',notebook_id:'math',language:'en'});assert.ok(!task.result.isError);
- const status=await(await worker.fetch(request('/api/bridge'),env)).json();assert.equal(status.events.length,2);assert.ok(status.events.some(e=>e.type==='response'&&e.transcription==='x = 3'));assert.ok(status.events.some(e=>e.type==='task'&&e.language==='en'));
- const later=await(await worker.fetch(request('/api/bridge?after='+encodeURIComponent(status.cursor)),env)).json();assert.deepEqual(later.events,[]);
- const other=await(await worker.fetch(request('/api/bridge','GET',undefined,'bob'),env)).json();assert.deepEqual(other.events,[]);
- assert.equal((await rpc('inkloop_write_response',{submission_id:'unknown',transcription:'x',feedback:'y'})).result.isError,true);
+test("MCP responses and tasks return to browser through stable cursor pagination", async () => {
+  const saved = await rpc("inkloop_write_response", {
+    submission_id: "submission-1",
+    transcription: "x = 3",
+    feedback: "Und −3?",
+    next_task: "x² = 16",
+  });
+  assert.ok(!saved.result.isError);
+  const task = await rpc("inkloop_set_task", {
+    task: "Differentiate x².",
+    notebook_id: "math",
+    language: "en",
+  });
+  assert.ok(!task.result.isError);
+  const status = await (await worker.fetch(request("/api/bridge"), env)).json();
+  assert.equal(status.events.length, 2);
+  assert.ok(
+    status.events.some(
+      (e) => e.type === "response" && e.transcription === "x = 3",
+    ),
+  );
+  assert.ok(
+    status.events.some((e) => e.type === "task" && e.language === "en"),
+  );
+  const later = await (
+    await worker.fetch(
+      request("/api/bridge?after=" + encodeURIComponent(status.cursor)),
+      env,
+    )
+  ).json();
+  assert.deepEqual(later.events, []);
+  const other = await (
+    await worker.fetch(request("/api/bridge", "GET", undefined, "bob"), env)
+  ).json();
+  assert.deepEqual(other.events, []);
+  assert.equal(
+    (
+      await rpc("inkloop_write_response", {
+        submission_id: "unknown",
+        transcription: "x",
+        feedback: "y",
+      })
+    ).result.isError,
+    true,
+  );
 });
-test('MCP discovery and tool list expose the four real operations',async()=>{
- for(const method of ['server/discover','initialize','tools/list']){const response=await worker.fetch(request('/mcp','POST',JSON.stringify({jsonrpc:'2.0',id:1,method}),null),env);assert.equal(response.status,200);const result=await response.json();assert.ok(result.result);if(method==='tools/list')assert.equal(result.result.tools.length,4);}
+test("MCP discovery and tool list expose the four real operations", async () => {
+  for (const method of ["server/discover", "initialize", "tools/list"]) {
+    const response = await worker.fetch(
+      request(
+        "/mcp",
+        "POST",
+        JSON.stringify({ jsonrpc: "2.0", id: 1, method }),
+        null,
+      ),
+      env,
+    );
+    assert.equal(response.status, 200);
+    const result = await response.json();
+    assert.ok(result.result);
+    if (method === "tools/list") assert.equal(result.result.tools.length, 4);
+  }
 });

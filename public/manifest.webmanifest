@@ -1,1 +1,26 @@
-{"id":"./","name":"Inkloop – Dein Lernheft","short_name":"Inkloop","description":"Dein Raum zum Denken. Handschriftlich lernen mit deinem eigenen KI-Chat.","lang":"de","start_url":"./","scope":"./","display":"standalone","background_color":"#191a19","theme_color":"#191a19","icons":[{"src":"./icon-192.png","sizes":"192x192","type":"image/png","purpose":"any"},{"src":"./icon-512.png","sizes":"512x512","type":"image/png","purpose":"any maskable"}]}
+{
+  "id": "./",
+  "name": "Inkloop – Dein Lernheft",
+  "short_name": "Inkloop",
+  "description": "Dein Raum zum Denken. Handschriftlich lernen mit deinem eigenen KI-Chat.",
+  "lang": "de",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#191a19",
+  "theme_color": "#191a19",
+  "icons": [
+    {
+      "src": "./icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

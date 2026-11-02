@@ -56,3 +56,5 @@ Die Web-App wird zunächst statisch in `dist/` gebaut. Der anschließende Worker
 ## Designreferenzen
 
 [Apple Design](https://github.com/treemonsal/Kleiderschrank/blob/main/.claude/skills/apple-design/SKILL.md) und [Claude-Look der Kleiderschrank-App](https://github.com/treemonsal/Kleiderschrank/blob/main/design/CLAUDE_LOOK.md). Bewegung reduziert sich bei entsprechender Systemeinstellung; Transparenz und Kontrast berücksichtigen die Systemeinstellungen.
+
+Das persönliche Inkloop-Plugin wurde von Sites erstellt; Plugin Management bestätigt es als bereits installiert. Aktiviere Inkloop im gewünschten ChatGPT-Chat. Eine Live-Tool-Ausführung aus genau diesem Chat konnte in der Entwicklungssitzung nicht verifiziert werden, weil die neu installierten Tools dort noch nicht im Werkzeugkatalog erschienen.

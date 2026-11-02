@@ -22,3 +22,9 @@ No external AI requests, API keys, paid replacement model or credential harvesti
 ## Repository naming
 
 The application and installed PWA are named Inkloop. Source is in the user-provided repository `treemonsal/3d-Zimmer`; the connected GitHub toolset supports content and Git updates but has no repository rename operation. The CLI's GitHub API access is forbidden in this environment. Git pushes to the existing repository succeeded. No repository-name change is claimed.
+
+## Published plugin verification
+
+The Worker deployment succeeded with `has_mcp: true`. Sites returned the private MCP endpoint and plugin ID `plugin_asdk_app_sites_485e0340f86c8191a3aa85f497bdad62`. Plugin Management explicitly reported this plugin as **Already installed**. The current conversation's available tool catalog did not refresh to include Inkloop's tools, so an authenticated live tool call could not be completed in this turn. Installation is confirmed; health of a tool call from the user's chosen original chat is not independently verified. Enable Inkloop in that chat to use it.
+
+There are twelve passing named automated tests: six model tests, three DOM integration tests and three server tests. DOM canvas rendering and clipboard behavior are mocked; server R2 uses an in-memory test double. Real iPad Pencil/clipboard testing remains unverified.

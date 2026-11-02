@@ -1,17 +1,164 @@
-import { useEffect, useRef, type PointerEvent } from 'react';
-import { eraseAt, uid, type Point, type Stroke, type Paper } from './model';
-import { PAGE_H, PAGE_W, renderInk } from './ink';
-export type Tool='pen'|'marker'|'eraser'|'line';
-type Props={strokes:Stroke[];onChange:(s:Stroke[])=>void;tool:Tool;color:string;width:number;touchWriting:boolean;paper:Paper;zoom?:number;label?:string;disabled?:boolean};
-export default function InkCanvas({strokes,onChange,tool,color,width,touchWriting,paper,zoom=1,label='Schreibfläche',disabled=false}:Props){
- const canvas=useRef<HTMLCanvasElement>(null),live=useRef<Stroke|null>(null),base=useRef(strokes),pointer=useRef<number|null>(null),frame=useRef(0),working=useRef<Stroke[]>(strokes);
- const change=useRef(onChange);change.current=onChange;
- useEffect(()=>{base.current=strokes;working.current=strokes;if(canvas.current)renderInk(canvas.current,strokes,live.current||undefined);},[strokes]);
- useEffect(()=>()=>{cancelAnimationFrame(frame.current);if(pointer.current!==null){const result=live.current?[...working.current,live.current]:working.current;change.current(result);}},[]);
- const redraw=()=>{if(frame.current)return;frame.current=requestAnimationFrame(()=>{frame.current=0;if(canvas.current)renderInk(canvas.current,working.current,live.current||undefined);});};
- const point=(e:{clientX:number;clientY:number;pressure:number}):Point=>{const rect=canvas.current!.getBoundingClientRect();return{x:Math.max(0,Math.min(PAGE_W,(e.clientX-rect.left)/rect.width*PAGE_W)),y:Math.max(0,Math.min(PAGE_H,(e.clientY-rect.top)/rect.height*PAGE_H)),p:e.pressure>0?Math.min(1,e.pressure):.5};};
- const down=(e:PointerEvent<HTMLCanvasElement>)=>{if(disabled||pointer.current!==null||(e.pointerType==='touch'&&!touchWriting)||e.button>0)return;e.preventDefault();e.currentTarget.setPointerCapture(e.pointerId);pointer.current=e.pointerId;working.current=base.current;const p=point(e);if(tool==='eraser')working.current=eraseAt(working.current,p,15);else live.current={id:uid(),tool,color,width:tool==='marker'?width*7:width,points:[p]};redraw();};
- const move=(e:PointerEvent<HTMLCanvasElement>)=>{if(pointer.current!==e.pointerId)return;e.preventDefault();const coalesced=e.nativeEvent.getCoalescedEvents?.();const events=coalesced?.length?coalesced:[e.nativeEvent];for(const event of events){const p=point(event);if(tool==='eraser'){working.current=eraseAt(working.current,p,15);}else if(live.current){if(live.current.tool==='line')live.current.points=[live.current.points[0],p];else {const last=live.current.points.at(-1)!;if(Math.hypot(last.x-p.x,last.y-p.y)>.4)live.current.points.push(p);}}}redraw();};
- const finish=(e:PointerEvent<HTMLCanvasElement>)=>{if(pointer.current!==e.pointerId)return;const result=live.current?[...working.current,live.current]:working.current;pointer.current=null;live.current=null;base.current=result;working.current=result;onChange(result);if(e.currentTarget.hasPointerCapture(e.pointerId))e.currentTarget.releasePointerCapture(e.pointerId);redraw();};
- return <div className={`paper paper-${paper} ${disabled?'paper-disabled':''}`} style={{width:`${zoom*100}%`}}><div className="paper-margin"/><canvas ref={canvas} width={PAGE_W} height={PAGE_H} aria-label={label} role="img" data-testid="ink-canvas" style={{touchAction:touchWriting?'none':'pan-x pan-y pinch-zoom'}} onPointerDown={down} onPointerMove={move} onPointerUp={finish} onPointerCancel={finish} onLostPointerCapture={finish}/></div>;
+import { useEffect, useRef, type PointerEvent } from "react";
+import { eraseAt, uid, type Point, type Stroke, type Paper } from "./model";
+import { PAGE_H, PAGE_W, renderInk } from "./ink";
+export type Tool = "pen" | "marker" | "eraser" | "line";
+type Props = {
+  strokes: Stroke[];
+  onChange: (s: Stroke[]) => void;
+  tool: Tool;
+  color: string;
+  width: number;
+  touchWriting: boolean;
+  paper: Paper;
+  zoom?: number;
+  label?: string;
+  disabled?: boolean;
+};
+export default function InkCanvas({
+  strokes,
+  onChange,
+  tool,
+  color,
+  width,
+  touchWriting,
+  paper,
+  zoom = 1,
+  label = "Schreibfläche",
+  disabled = false,
+}: Props) {
+  const canvas = useRef<HTMLCanvasElement>(null),
+    live = useRef<Stroke | null>(null),
+    base = useRef(strokes),
+    pointer = useRef<number | null>(null),
+    frame = useRef(0),
+    working = useRef<Stroke[]>(strokes);
+  const change = useRef(onChange);
+  change.current = onChange;
+  useEffect(() => {
+    base.current = strokes;
+    working.current = strokes;
+    if (canvas.current)
+      renderInk(canvas.current, strokes, live.current || undefined);
+  }, [strokes]);
+  useEffect(
+    () => () => {
+      cancelAnimationFrame(frame.current);
+      if (pointer.current !== null) {
+        const result = live.current
+          ? [...working.current, live.current]
+          : working.current;
+        change.current(result);
+      }
+    },
+    [],
+  );
+  const redraw = () => {
+    if (frame.current) return;
+    frame.current = requestAnimationFrame(() => {
+      frame.current = 0;
+      if (canvas.current)
+        renderInk(canvas.current, working.current, live.current || undefined);
+    });
+  };
+  const point = (e: {
+    clientX: number;
+    clientY: number;
+    pressure: number;
+  }): Point => {
+    const rect = canvas.current!.getBoundingClientRect();
+    return {
+      x: Math.max(
+        0,
+        Math.min(PAGE_W, ((e.clientX - rect.left) / rect.width) * PAGE_W),
+      ),
+      y: Math.max(
+        0,
+        Math.min(PAGE_H, ((e.clientY - rect.top) / rect.height) * PAGE_H),
+      ),
+      p: e.pressure > 0 ? Math.min(1, e.pressure) : 0.5,
+    };
+  };
+  const down = (e: PointerEvent<HTMLCanvasElement>) => {
+    if (
+      disabled ||
+      pointer.current !== null ||
+      (e.pointerType === "touch" && !touchWriting) ||
+      e.button > 0
+    )
+      return;
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    pointer.current = e.pointerId;
+    working.current = base.current;
+    const p = point(e);
+    if (tool === "eraser") working.current = eraseAt(working.current, p, 15);
+    else
+      live.current = {
+        id: uid(),
+        tool,
+        color,
+        width: tool === "marker" ? width * 7 : width,
+        points: [p],
+      };
+    redraw();
+  };
+  const move = (e: PointerEvent<HTMLCanvasElement>) => {
+    if (pointer.current !== e.pointerId) return;
+    e.preventDefault();
+    const coalesced = e.nativeEvent.getCoalescedEvents?.();
+    const events = coalesced?.length ? coalesced : [e.nativeEvent];
+    for (const event of events) {
+      const p = point(event);
+      if (tool === "eraser") {
+        working.current = eraseAt(working.current, p, 15);
+      } else if (live.current) {
+        if (live.current.tool === "line")
+          live.current.points = [live.current.points[0], p];
+        else {
+          const last = live.current.points.at(-1)!;
+          if (Math.hypot(last.x - p.x, last.y - p.y) > 0.4)
+            live.current.points.push(p);
+        }
+      }
+    }
+    redraw();
+  };
+  const finish = (e: PointerEvent<HTMLCanvasElement>) => {
+    if (pointer.current !== e.pointerId) return;
+    const result = live.current
+      ? [...working.current, live.current]
+      : working.current;
+    pointer.current = null;
+    live.current = null;
+    base.current = result;
+    working.current = result;
+    onChange(result);
+    if (e.currentTarget.hasPointerCapture(e.pointerId))
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    redraw();
+  };
+  return (
+    <div
+      className={`paper paper-${paper} ${disabled ? "paper-disabled" : ""}`}
+      style={{ width: `${zoom * 100}%` }}
+    >
+      <div className="paper-margin" />
+      <canvas
+        ref={canvas}
+        width={PAGE_W}
+        height={PAGE_H}
+        aria-label={label}
+        role="img"
+        data-testid="ink-canvas"
+        style={{
+          touchAction: touchWriting ? "none" : "pan-x pan-y pinch-zoom",
+        }}
+        onPointerDown={down}
+        onPointerMove={move}
+        onPointerUp={finish}
+        onPointerCancel={finish}
+        onLostPointerCapture={finish}
+      />
+    </div>
+  );
 }
