@@ -6,6 +6,7 @@ import { Window } from 'happy-dom';
 import 'fake-indexeddb/auto';
 const window=new Window({url:'https://inkloop.test'});
 window.document.write('<!doctype html><html><head></head><body></body></html>');
+Object.defineProperty(window.document,'compatMode',{value:'CSS1Compat',configurable:true});
 for(const name of ['window','document','HTMLElement','HTMLInputElement','HTMLTextAreaElement','HTMLCanvasElement','HTMLDialogElement','HTMLButtonElement','Event','MouseEvent','PointerEvent','File','Blob','navigator','location','requestAnimationFrame','cancelAnimationFrame']) {
  const value=(window as unknown as Record<string,unknown>)[name];
  Object.defineProperty(globalThis,name,{value:typeof value==='function'&&['requestAnimationFrame','cancelAnimationFrame'].includes(name)?value.bind(window):value,configurable:true,writable:true});
@@ -62,4 +63,20 @@ test('complete notebook flow: draw, undo/redo, persist, submit snapshot, import 
  const fresh=document.querySelector('[data-testid="ink-canvas"]')!;
  await act(async()=>{fresh.dispatchEvent(new window.PointerEvent('pointerdown',{pointerId:2,pointerType:'touch',button:0,clientX:40,clientY:50,bubbles:true}));fresh.dispatchEvent(new window.PointerEvent('pointerup',{pointerId:2,pointerType:'touch',button:0,clientX:40,clientY:50,bubbles:true}));await delay(400);});assert.equal((await loadData())!.notebooks[0].pages[1].strokes.length,0);
  await act(async()=>{root.unmount();});await window.happyDOM.abort();
+});
+
+test('four handwriting references replace the profile only after completion and survive reopening',async()=>{
+ const d=initialData();d.onboardingDone=true;d.samples=[{id:'old-reference',label:'previous',strokes:[{id:'old-stroke',tool:'pen',color:'#eee9df',width:2.5,points:[{x:1,y:1,p:.5}]}]}];await saveData(d);
+ const host=document.body.appendChild(document.createElement('div'));const nextRoot=createRoot(host);
+ await act(async()=>{nextRoot.render(<App/>);});await act(async()=>{await delay(80);});
+ await click('Deine Handschrift1 Referenzen hinterlegt');
+ await click('Schließen');assert.equal((await loadData())!.samples[0].id,'old-reference');
+ await click('Deine Handschrift1 Referenzen hinterlegt');
+ for(let step=0;step<4;step++){
+  const canvas=document.querySelector('dialog [data-testid="ink-canvas"]')!;assert.ok(canvas);
+  await act(async()=>{for(const [type,x] of [['pointerdown',60],['pointermove',110],['pointerup',120]] as const)canvas.dispatchEvent(new window.PointerEvent(type,{pointerId:3,pointerType:'pen',button:0,clientX:x,clientY:70+step*2,pressure:.5,bubbles:true}));});
+  await click(step===3?'Schriftprofil speichern':'Nächste Probe');
+ }
+ await act(async()=>{await delay(450);});const saved=(await loadData())!;assert.equal(saved.samples.length,4);assert.ok(saved.samples.every(s=>s.strokes.length===1));assert.notEqual(saved.samples[0].id,'old-reference');assert.equal(saved.notebooks[0].pages[0].strokes.length,0);
+ await act(async()=>{nextRoot.unmount();});host.remove();await window.happyDOM.abort();
 });

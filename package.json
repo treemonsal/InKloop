@@ -1,12 +1,12 @@
 {
   "name": "inkloop",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
-    "build": "tsc -b && vite build && node scripts/postbuild.mjs",
-    "test": "node --import tsx tests/model.test.ts && node --import tsx tests/integration.test.tsx",
+    "build": "tsc -b && vite build && node scripts/postbuild.mjs && node scripts/build-worker.mjs",
+    "test": "node --import tsx tests/model.test.ts && node --import tsx tests/integration.test.tsx && node tests/server.test.mjs",
     "preview": "vite preview --host 0.0.0.0"
   },
   "dependencies": {

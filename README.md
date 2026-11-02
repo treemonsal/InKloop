@@ -2,6 +2,17 @@
 
 Ein persönliches Lernheft als iPad-PWA: mit Apple Pencil schreiben, eine Lösung bewusst abgeben und mit dem eigenen ChatGPT- oder Claude-Chat weiterlernen. Dunkles Design auf Basis der Apple-Design-Prinzipien und der Kleiderschrank-App.
 
+## ChatGPT-Plugin (Version 1.1)
+
+Inkloop stellt ein persönliches MCP-Plugin für ChatGPT bereit. Nach Aktivierung im Original-Chat kann ChatGPT Aufgaben senden, abgegebene Handschrift als Bild lesen und Transkription sowie Feedback direkt ins Lernheft zurückschreiben. Es nutzt dabei den bestehenden Chat und sein Modell; Inkloop ruft keine KI-API auf.
+
+- App und Chat müssen mit demselben ChatGPT-Konto geöffnet sein. Die private Sites-Anmeldung sichert den Zugriff.
+- In ChatGPT Inkloop als Plugin aktivieren. Danach z. B.: „Sende die nächste Aufgabe mit Inkloop in mein Lernheft.“
+- Nach **Antwort abgeben** den Plugin-Auftrag in den bestehenden Chat kopieren oder ChatGPT auffordern, die neueste Inkloop-Abgabe zu lesen.
+- Die Antwort wird bei geöffnetem Online-Lernheft automatisch abgeholt (alle sechs Sekunden und beim Zurückwechseln). Der Chat selbst wird nicht automatisch angeschrieben.
+- Die Bridge speichert bewusst abgegebene PNGs, Aufgaben, Antworten und den Lernheftindex privat in R2, getrennt nach der von Sites bestätigten Nutzer-ID. Nicht abgegebene Handschrift bleibt lokal.
+- Claude und Chats ohne aktiviertes Plugin verwenden die vollständige manuelle Bildübergabe. Eine Claude-MCP-Verbindung wurde nicht eingerichtet oder verifiziert.
+
 ## Benutzen
 
 1. In Safari öffnen, dann **Teilen → Zum Home-Bildschirm**. Ab dann möglichst immer über dieses Symbol öffnen, damit dieselben lokalen Daten verwendet werden.
@@ -14,8 +25,8 @@ Ein persönliches Lernheft als iPad-PWA: mit Apple Pencil schreiben, eine Lösun
 ## Bewusste Grenzen
 
 - **Keine kostenpflichtigen KI-Aufrufe**, keine API-Schlüssel und kein Ersatzmodell. Die normalen Nachrichten-/Bildlimits des gewählten Chat-Abos gelten. Inkloop selbst transkribiert nichts automatisch.
-- Eine PWA kann die Oberfläche und Kontodaten anderer Websites nicht auslesen. Die bestehende Chat-Unterhaltung bleibt im Originaldienst. Bild-/Textübertragung und Rückimport benötigen Nutzereingaben; automatische Synchronisierung gehört nicht zu dieser Version.
-- Alle Lernhefte und Proben bleiben in IndexedDB auf diesem Gerät/in diesem Browser. Keine Cloud-Synchronisierung. Gelöschte Website-Daten, Privatmodus oder Speicherdruck können Daten entfernen. Safari und Home-Bildschirm-App können getrennte Speicher haben.
+- Eine PWA kann die Oberfläche und Kontodaten anderer Websites nicht auslesen. Die bestehende Chat-Unterhaltung bleibt im Originaldienst. Bild-/Textübertragung und Rückimport benötigen Nutzereingaben; automatisches Anschreiben oder Mitlesen beliebiger Original-Chats gehört nicht zu dieser Version. Über das aktivierte ChatGPT-Plugin werden gezielt übergebene Aufgaben und Antworten synchronisiert.
+- Alle Lernhefte und Proben bleiben in IndexedDB auf diesem Gerät/in diesem Browser. Keine vollständige Cloud-Synchronisierung der Lernhefte; für das ChatGPT-Plugin werden gezielt Abgaben und Chat-Antworten serverseitig bereitgestellt. Gelöschte Website-Daten, Privatmodus oder Speicherdruck können Daten entfernen. Safari und Home-Bildschirm-App können getrennte Speicher haben.
 - Das Lernheft funktioniert nach vollständigem ersten Laden auch offline. Der KI-Chat benötigt Internet. Die Service-Worker-Aktualisierung aktiviert sich nach dem Schließen alter Inkloop-Fenster.
 - Der Radierer löscht ganze Striche. Rückgängig/Wiederholen gilt für die Sitzung und die jeweilige Seite. Abgaben behalten ihre eigenen Strichkopien.
 - Pencil-Druck wird aus Pointer Events übernommen. Handballeneingabe wird im Pencil-Modus ignoriert. Echtes Schreibgefühl und iPad-Clipboard/Share benötigen einen Gerätetest.
@@ -31,7 +42,7 @@ npm test
 npm run build
 ```
 
-Statische Ausgabe: `dist/`. Alle Ressourcen werden mit relativen Pfaden gebaut, sodass auch Hosting in einem Unterverzeichnis möglich ist. Die private Sites-Konfiguration liegt in `.openai/hosting.json` und enthält keine Geheimnisse.
+Die Web-App wird zunächst statisch in `dist/` gebaut. Der anschließende Worker-Build bettet die Dateien in `dist/server/index.js` ein und stellt zusätzlich `/mcp` sowie die private `/api/bridge` bereit. Alle Ressourcen werden mit relativen Pfaden gebaut, sodass auch Hosting in einem Unterverzeichnis möglich ist. Die private Sites-Konfiguration liegt in `.openai/hosting.json` und enthält keine Geheimnisse.
 
 ## Architektur
 
@@ -40,7 +51,7 @@ Statische Ausgabe: `dist/`. Alle Ressourcen werden mit relativen Pfaden gebaut, 
 - IndexedDB-Speicherung mit Transaktionsprüfung und serieller Schreibwarteschlange. Fehler sperren bestehende Daten vor einem versehentlichen Neustart; Änderungen anderer Fenster lösen einen Neuladehinweis aus.
 - Wiederherstellung mit Formatprüfung, Größenlimits, gültigen Chat-URLs und eindeutigen IDs.
 - KI-Antworten als sicher gerendertes Markdown (kein HTML), GFM-Tabellen und KaTeX; Darstellung bei Bedarf nachgeladen.
-- Keine Analytics, keine Cookies von Inkloop, keine externen Schriften, keine eingebetteten Drittanbieter-Chats.
+- Keine Analytics, keine eigenen Login-Cookies (Anmeldung durch Sites), keine externen Schriften, keine eingebetteten Drittanbieter-Chats. Cloudflare R2 für die private Plugin-Bridge.
 
 ## Designreferenzen
 

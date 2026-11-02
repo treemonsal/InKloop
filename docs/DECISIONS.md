@@ -14,11 +14,11 @@ Vier Proben: Buchstabenverwechslungen, Ziffern, mathematische/finanzielle Zeiche
 
 ## Original-Chats statt API-Tutor
 
-ChatGPT-/Claude-Abonnements werden nicht durch API-Schlüssel ersetzt. Keine Tokens oder Zugangsdaten im Client speichern. Kein fingierter OAuth-Login, keine unoffiziellen Session-Endpunkte, keine künstliche KI-Animation und kein vorgetäuschter synchronisierter Chat. Das Übergeben über Zwischenablage, Datei und Share Sheet ist sichtbar und explizit.
+ChatGPT-/Claude-Abonnements werden nicht durch API-Schlüssel ersetzt. Keine Tokens oder Zugangsdaten im Client speichern. Kein fingierter OAuth-Login, keine unoffiziellen Session-Endpunkte, keine künstliche KI-Animation und kein vorgetäuschter synchronisierter Chat. Das Übergeben über Zwischenablage, Datei und Share Sheet ist sichtbar und explizit. Zusätzlich kann das persönliche ChatGPT-MCP-Plugin abgegebene Bilder lesen und Antworten sowie Aufgaben zurückschreiben. Der Original-Chat startet den Tool-Aufruf; Inkloop startet keine unsichtbaren Chats.
 
 ## Speicher und Verlustschutz
 
-IndexedDB als lokale Quelle, serielle Transaktionen, Speichermeldung, Backup als JSON. Kein Fallback, der beim Ladefehler einen leeren Datensatz über vorhandene Daten schreibt. Mehrere Tabs erkennen konkurrierende Schreibvorgänge. Notizen werden nicht in Repository, Hosting-Artefakt oder URL gespeichert.
+IndexedDB als lokale Quelle, serielle Transaktionen, Speichermeldung, Backup als JSON. Kein Fallback, der beim Ladefehler einen leeren Datensatz über vorhandene Daten schreibt. Mehrere Tabs erkennen konkurrierende Schreibvorgänge. Notizen werden nicht in Repository, Hosting-Artefakt oder URL gespeichert. Die Plugin-Bridge speichert bewusst abgegebene Bilder und Antworten privat in R2, getrennt nach Site-Nutzer-ID.
 
 ## Quellen für technische Grenzen
 
