@@ -80,3 +80,23 @@ test('four handwriting references replace the profile only after completion and 
  await act(async()=>{await delay(450);});const saved=(await loadData())!;assert.equal(saved.samples.length,4);assert.ok(saved.samples.every(s=>s.strokes.length===1));assert.notEqual(saved.samples[0].id,'old-reference');assert.equal(saved.notebooks[0].pages[0].strokes.length,0);
  await act(async()=>{nextRoot.unmount();});host.remove();await window.happyDOM.abort();
 });
+
+test('plugin responses arrive automatically and new tasks preserve an existing handwritten page',async()=>{
+ const d=initialData();d.onboardingDone=true;const book=d.notebooks[0],page=book.pages[0];page.strokes=[{id:'ink-1',tool:'pen',color:'#eee9df',width:2.5,points:[{x:100,y:100,p:.5}]}];page.submissions=[{id:'shared-1',createdAt:Date.now(),strokes:structuredClone(page.strokes),task:'Task',transcription:'',feedback:'',nextTask:''}];await saveData(d);
+ const originalFetch=globalThis.fetch;let phase=0;
+ globalThis.fetch=(async(input)=>{
+  const path=String(input);if(!path.startsWith('/api/bridge'))throw new Error('Unexpected network request');
+  if(path.includes('workspace'))return new Response(JSON.stringify({ok:true}),{headers:{'content-type':'application/json'}});
+  const responseEvent={id:'event-one',createdAt:Date.now(),type:'response',notebookId:book.id,pageId:page.id,submissionId:'shared-1',transcription:'x = 3',feedback:'Berücksichtige auch −3.',nextTask:''};
+  const taskEvent={id:'event-two',createdAt:Date.now(),type:'task',notebookId:book.id,task:'Solve x² = 16.',language:'en'};
+  const events=phase===0?[responseEvent]:phase===1?[taskEvent]:[];const cursor=phase===0?'cursor-one':'cursor-two';phase++;
+  return new Response(JSON.stringify({ok:true,events,cursor}),{headers:{'content-type':'application/json'}});
+ }) as typeof fetch;
+ const host=document.body.appendChild(document.createElement('div'));const app=createRoot(host);
+ try{
+  await act(async()=>{app.render(<App/>);});await act(async()=>{await delay(100);});await act(async()=>{await delay(500);});
+  let saved=(await loadData())!;assert.equal(saved.notebooks[0].pages[0].submissions[0].transcription,'x = 3');assert.equal(saved.bridgeCursor,'cursor-one');assert.ok(document.body.textContent?.includes('Berücksichtige auch −3.'));
+  await act(async()=>{window.dispatchEvent(new window.Event('focus'));await delay(100);});await act(async()=>{await delay(450);});
+  saved=(await loadData())!;assert.equal(saved.notebooks[0].pages.length,2);assert.equal(saved.notebooks[0].pages[1].task,'Solve x² = 16.');assert.equal(saved.notebooks[0].pages[0].strokes.length,1);assert.equal(saved.notebooks[0].language,'en');assert.equal(saved.bridgeCursor,'cursor-two');
+ }finally{await act(async()=>{app.unmount();});host.remove();globalThis.fetch=originalFetch;await window.happyDOM.abort();}
+});
