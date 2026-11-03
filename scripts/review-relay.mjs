@@ -73,7 +73,7 @@ async function assess(task, image) {
         language: task.language,
       }),
     ].join("\n");
-    await run(
+    const execution = run(
       codex,
       [
         "exec",
@@ -103,6 +103,8 @@ async function assess(task, image) {
       ],
       { cwd: scratch, env: codexEnv, timeout: 240_000, maxBuffer: 2_000_000 },
     );
+    execution.child.stdin.end();
+    await execution;
     const result = JSON.parse(await readFile(output, "utf8"));
     if (
       typeof result.transcription !== "string" ||
