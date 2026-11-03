@@ -206,6 +206,7 @@ export default function App() {
     [newName, setNewName] = useState(""),
     [profileStep, setProfileStep] = useState(0),
     [sampleInk, setSampleInk] = useState<Stroke[]>([]),
+    [sampleUndo, setSampleUndo] = useState<Stroke[] | null>(null),
     [profileDraft, setProfileDraft] = useState<Sample[]>([]),
     [prepared, setPrepared] = useState<{
       blob: Blob;
@@ -618,6 +619,7 @@ export default function App() {
   const startProfile = () => {
     setProfileStep(0);
     setSampleInk([]);
+    setSampleUndo(null);
     setProfileDraft([]);
     open("profile");
   };
@@ -952,7 +954,7 @@ export default function App() {
         <main className="library">
           <header className="library-top">
             <div className="library-brand">
-              <Logo /> Inkloop <small className="library-version">V11</small>
+              <Logo /> Inkloop <small className="library-version">V12</small>
             </div>
             <div className="topbar-actions">
               <IconButton label="Deine Handschrift" onClick={startProfile}>
@@ -1294,6 +1296,13 @@ export default function App() {
                         color={color}
                         width={width}
                         scratchToErase
+                        onPageSwipe={(direction) => {
+                          const index = notebook.pages.findIndex(
+                            (p) => p.id === page.id,
+                          );
+                          const target = notebook.pages[index + direction];
+                          if (target) navigatePage(target.id);
+                        }}
                         paper={page.paper}
                         zoom={zoom}
                       />
@@ -1610,7 +1619,11 @@ export default function App() {
             <InkCanvas
               key={profileStep}
               strokes={sampleInk}
-              onChange={setSampleInk}
+              onChange={(ink) => {
+                setSampleUndo(sampleInk);
+                setSampleInk(ink);
+              }}
+              scratchToErase
               tool="pen"
               color={palette[0]}
               width={2.5}
@@ -1619,9 +1632,22 @@ export default function App() {
             />
           </div>
           <div className="sample-actions">
+            <IconButton
+              label="Probe rückgängig"
+              disabled={!sampleUndo}
+              onClick={() => {
+                if (sampleUndo) setSampleInk(sampleUndo);
+                setSampleUndo(null);
+              }}
+            >
+              <Undo2 size={16} />
+            </IconButton>
             <button
               className="text-button small"
-              onClick={() => setSampleInk([])}
+              onClick={() => {
+                setSampleUndo(sampleInk);
+                setSampleInk([]);
+              }}
             >
               <Eraser size={14} /> Neu schreiben
             </button>
@@ -1642,6 +1668,7 @@ export default function App() {
                 setProfileDraft(samples);
                 setProfileStep(profileStep + 1);
                 setSampleInk([]);
+                setSampleUndo(null);
               } else {
                 setData({ ...data, samples, onboardingDone: true });
                 close();

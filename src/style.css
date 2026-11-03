@@ -1669,12 +1669,12 @@ input[type="checkbox"] {
 }
 
 :root.inkloop-standalone {
-  --top-clearance: max(26px, env(safe-area-inset-top, 0px));
+  --top-clearance: max(14px, env(safe-area-inset-top, 0px));
 }
 
 @media (display-mode: standalone) {
   :root {
-    --top-clearance: max(26px, env(safe-area-inset-top, 0px));
+    --top-clearance: max(14px, env(safe-area-inset-top, 0px));
   }
 }
 

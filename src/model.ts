@@ -342,44 +342,85 @@ export function eraseScratch(
   points: Point[],
   duration: number,
 ) {
-  if (!strokes.length || points.length < 4 || duration > 1550) return strokes;
+  if (!strokes.length || points.length < 4 || duration > 1650) return strokes;
 
-  let left = Infinity,
-    right = -Infinity,
-    top = Infinity,
-    bottom = -Infinity;
-  for (const { x, y } of points) {
-    left = Math.min(left, x);
-    right = Math.max(right, x);
-    top = Math.min(top, y);
-    bottom = Math.max(bottom, y);
-  }
-  const width = right - left;
-  const height = bottom - top;
-  if (width < 18 || width > 420 || height > Math.min(42, width * 0.75))
-    return strokes;
+  // Look for three overlapping sweeps, independent of the writing angle.
+  for (let axis = 0; axis < 8; axis++) {
+    const angle = (axis * Math.PI) / 8;
+    const dx = Math.cos(angle),
+      dy = Math.sin(angle);
+    const projected = points.map(({ x, y }) => ({
+      along: x * dx + y * dy,
+      across: y * dx - x * dy,
+    }));
+    const turns = [0];
+    let extreme = 0;
+    let direction = 0;
+    for (let i = 1; i < projected.length; i++) {
+      const delta = projected[i].along - projected[extreme].along;
+      if (!direction) {
+        if (Math.abs(delta) >= 7) {
+          direction = Math.sign(delta);
+          extreme = i;
+        }
+      } else if (delta * direction > 0) {
+        extreme = i;
+      } else if (delta * direction <= -7) {
+        turns.push(extreme);
+        direction = -direction;
+        extreme = i;
+      }
+    }
+    if (extreme !== turns.at(-1)) turns.push(extreme);
 
-  // Count full trips across the scratch, ignoring small turns in the middle.
-  let side = 0;
-  let passes = 0;
-  for (const { x } of points) {
-    const edge =
-      x <= left + width * 0.22 ? -1 : x >= right - width * 0.22 ? 1 : 0;
-    if (edge && edge !== side) {
-      if (side) passes++;
-      side = edge;
+    for (let i = 3; i < turns.length; i++) {
+      const [a, b, c, d] = turns.slice(i - 3, i + 1);
+      const edges = [a, b, c, d].map((j) => projected[j].along);
+      const low = Math.max(
+        Math.min(edges[0], edges[1]),
+        Math.min(edges[1], edges[2]),
+        Math.min(edges[2], edges[3]),
+      );
+      const high = Math.min(
+        Math.max(edges[0], edges[1]),
+        Math.max(edges[1], edges[2]),
+        Math.max(edges[2], edges[3]),
+      );
+      if (high - low < 13 || high - low > 420) continue;
+
+      // Restrict the erase corridor to the part crossed in all three sweeps.
+      let top = Infinity,
+        bottom = -Infinity;
+      for (let j = a + 1; j <= d; j++) {
+        const before = projected[j - 1],
+          after = projected[j];
+        const range = bandInterval(before.along, after.along, low, high);
+        if (!range) continue;
+        const [from, to] = range;
+        const start = before.across + (after.across - before.across) * from;
+        const end = before.across + (after.across - before.across) * to;
+        top = Math.min(top, start, end);
+        bottom = Math.max(bottom, start, end);
+      }
+      const height = bottom - top;
+      if (height > Math.min(38, (high - low) * 0.76)) continue;
+      const middle = (top + bottom) / 2;
+      const radius = Math.min((high - low) / 2, height / 2 + 7);
+      const at = (u: number): Point => ({
+        x: u * dx - middle * dy,
+        y: u * dy + middle * dx,
+        p: 0.5,
+      });
+      const erased = eraseAlong(
+        strokes,
+        at(low + radius),
+        at(high - radius),
+        radius,
+      );
+      if (erased !== strokes) return erased;
     }
   }
-  if (passes < 3) return strokes;
-
-  const y = (top + bottom) / 2;
-  const radius = Math.min(width / 2, height / 2 + 7);
-  return eraseAlong(
-    strokes,
-    { x: left + radius, y, p: 0.5 },
-    { x: right - radius, y, p: 0.5 },
-    radius,
-  );
+  return strokes;
 }
 
 export function eraseAt(

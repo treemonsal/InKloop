@@ -8,7 +8,13 @@ import {
   type Paper,
 } from "./model";
 import { PAGE_H, PAGE_W, drawStroke, renderInk } from "./ink";
-type Contact = { x: number; y: number; startX: number; startY: number };
+type Contact = {
+  x: number;
+  y: number;
+  startX: number;
+  startY: number;
+  palm: boolean;
+};
 export type Tool = "pen" | "marker" | "eraser" | "line";
 type Props = {
   strokes: Stroke[];
@@ -17,6 +23,7 @@ type Props = {
   color: string;
   width: number;
   scratchToErase?: boolean;
+  onPageSwipe?: (direction: -1 | 1) => void;
   paper: Paper;
   zoom?: number;
   label?: string;
@@ -29,6 +36,7 @@ export default function InkCanvas({
   color,
   width,
   scratchToErase = false,
+  onPageSwipe,
   paper,
   zoom = 1,
   label = "Schreibfläche",
@@ -44,8 +52,7 @@ export default function InkCanvas({
     pointerType = useRef(""),
     touches = useRef(new Map<number, Contact>()),
     touchLocked = useRef(false),
-    panning = useRef(false),
-    touchesDuringPen = useRef(false),
+    gesture = useRef<"scroll" | "page" | null>(null),
     lastPenUp = useRef(-Infinity),
     scratchStart = useRef<number | null>(null),
     frame = useRef(0),
@@ -190,10 +197,11 @@ export default function InkCanvas({
     working.current = base.current;
     redraw();
   };
+  const fingers = () =>
+    [...touches.current.values()].filter((touch) => !touch.palm);
   const down = (e: PointerEvent<HTMLCanvasElement>) => {
     if (disabled || e.button > 0) return;
     if (e.pointerType === "touch") {
-      if (Math.min(e.width, e.height) > 26) return;
       e.preventDefault();
       e.currentTarget.setPointerCapture(e.pointerId);
       touches.current.set(e.pointerId, {
@@ -201,17 +209,16 @@ export default function InkCanvas({
         y: e.clientY,
         startX: e.clientX,
         startY: e.clientY,
+        palm:
+          Math.min(e.width, e.height) > 42 ||
+          (pointer.current !== null && pointerType.current !== "touch"),
       });
-      if (pointer.current !== null && pointerType.current !== "touch") {
-        touchLocked.current = true;
-        touchesDuringPen.current = true;
-        return;
-      }
-      if (touches.current.size >= 2) {
+      const pair = fingers();
+      if (pair.length >= 2) {
         cancelFingerInk();
         touchLocked.current = true;
-        panning.current = false;
-        for (const contact of touches.current.values()) {
+        gesture.current = null;
+        for (const contact of pair) {
           contact.startX = contact.x;
           contact.startY = contact.y;
         }
@@ -220,11 +227,8 @@ export default function InkCanvas({
     }
     if (e.pointerType === "pen") {
       cancelFingerInk();
-      if (touches.current.size) {
-        touchLocked.current = true;
-        touchesDuringPen.current = true;
-      }
-      panning.current = false;
+      for (const contact of touches.current.values()) contact.palm = true;
+      gesture.current = null;
     }
     if (pointer.current !== null) return;
     e.preventDefault();
@@ -234,24 +238,21 @@ export default function InkCanvas({
   const move = (e: PointerEvent<HTMLCanvasElement>) => {
     if (e.pointerType === "touch") {
       const contact = touches.current.get(e.pointerId);
-      if (!contact) return;
+      if (!contact || contact.palm) return;
       e.preventDefault();
       const dx = e.clientX - contact.x;
       const dy = e.clientY - contact.y;
       contact.x = e.clientX;
       contact.y = e.clientY;
-      if (
-        touchesDuringPen.current ||
-        (pointer.current !== null && pointerType.current !== "touch")
-      )
-        return;
-      if (touches.current.size === 2) {
-        const [first, second] = touches.current.values();
+      if (pointer.current !== null && pointerType.current !== "touch") return;
+      const pair = fingers();
+      if (pair.length === 2) {
+        const [first, second] = pair;
         const scroller = e.currentTarget.closest<HTMLElement>(
           ".paper-scroll, .sample-surface",
         );
-        if (!scroller) return;
-        if (panning.current) {
+        if (!scroller || gesture.current === "page") return;
+        if (gesture.current === "scroll") {
           scroller.scrollLeft -= dx / 2;
           scroller.scrollTop -= dy / 2;
           return;
@@ -260,19 +261,34 @@ export default function InkCanvas({
           ay = first.y - first.startY;
         const bx = second.x - second.startX,
           by = second.y - second.startY;
-        // Both contacts must travel together before the page moves.
         if (
-          Math.hypot(ax, ay) >= 3 &&
-          Math.hypot(bx, by) >= 3 &&
-          ax * bx + ay * by > 0
+          Math.hypot(ax, ay) < 3 ||
+          Math.hypot(bx, by) < 3 ||
+          ax * bx + ay * by <= 0
+        )
+          return;
+
+        const x = (ax + bx) / 2,
+          y = (ay + by) / 2;
+        if (
+          onPageSwipe &&
+          scroller.scrollWidth <= scroller.clientWidth + 2 &&
+          Math.abs(x) > Math.abs(y) * 1.35
         ) {
-          panning.current = true;
-          scroller.scrollLeft -= (ax + bx) / 2;
-          scroller.scrollTop -= (ay + by) / 2;
+          if (Math.abs(x) >= 12) gesture.current = "page";
+          return;
         }
+        gesture.current = "scroll";
+        scroller.scrollLeft -= x;
+        scroller.scrollTop -= y;
         return;
       }
-      if (touchLocked.current || e.timeStamp - lastPenUp.current < 350) return;
+      if (
+        pair.length !== 1 ||
+        touchLocked.current ||
+        e.timeStamp - lastPenUp.current < 350
+      )
+        return;
       if (pointer.current === null) {
         if (
           Math.hypot(contact.x - contact.startX, contact.y - contact.startY) < 2
@@ -301,11 +317,36 @@ export default function InkCanvas({
   };
   const finish = (e: PointerEvent<HTMLCanvasElement>) => {
     if (e.pointerType === "touch") {
+      const released = touches.current.get(e.pointerId);
+      if (released && e.type === "pointerup") {
+        released.x = e.clientX;
+        released.y = e.clientY;
+      }
+      const pair = fingers();
+      const pageGesture = gesture.current === "page";
       touches.current.delete(e.pointerId);
-      if (touches.current.size < 2) panning.current = false;
-      if (!touches.current.size) {
-        touchLocked.current = false;
-        touchesDuringPen.current = false;
+      if (!released?.palm && pair.length <= 2) gesture.current = null;
+      if (!fingers().length) touchLocked.current = false;
+      if (
+        pageGesture &&
+        e.type === "pointerup" &&
+        released &&
+        !released.palm &&
+        pair.length === 2
+      ) {
+        const [first, second] = pair;
+        const ax = first.x - first.startX,
+          bx = second.x - second.startX;
+        const x = (ax + bx) / 2;
+        const y = (first.y - first.startY + second.y - second.startY) / 2;
+        if (
+          Math.abs(x) >= 54 &&
+          Math.abs(x) > Math.abs(y) * 1.35 &&
+          Math.min(Math.abs(ax), Math.abs(bx)) >= 30 &&
+          ax * bx > 0
+        ) {
+          onPageSwipe?.(x < 0 ? 1 : -1);
+        }
       }
       if (e.type !== "pointerup" && pointer.current === e.pointerId)
         cancelFingerInk();
@@ -323,7 +364,7 @@ export default function InkCanvas({
     }
     const draft = live.current;
     const before = working.current;
-    if (draft && scratchStart.current !== null && e.type === "pointerup") {
+    if (draft && scratchStart.current !== null) {
       working.current = eraseScratch(
         before,
         draft.points,

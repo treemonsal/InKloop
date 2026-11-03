@@ -661,6 +661,45 @@ test("the library opens first and each notebook remembers its last page", async 
     await click("Mathematik");
     await click("Seiten");
     await click("Neue Seite");
+    const swipe = async (dx: number, withPalm = false) => {
+      const canvas = document.querySelector('[data-testid="ink-canvas"]')!;
+      const send = (
+        type: string,
+        id: number,
+        x: number,
+        pointerType = "touch",
+      ) =>
+        canvas.dispatchEvent(
+          new window.PointerEvent(type, {
+            pointerId: id,
+            pointerType,
+            button: 0,
+            clientX: x,
+            clientY: 160,
+            bubbles: true,
+          }),
+        );
+      await act(async () => {
+        if (withPalm) {
+          send("pointerdown", 7, 480);
+          send("pointerdown", 8, 450, "pen");
+          send("pointerup", 8, 450, "pen");
+        }
+        send("pointerdown", 5, 200);
+        send("pointerdown", 6, 250);
+        send("pointermove", 5, 200 + dx);
+        send("pointermove", 6, 250 + dx);
+        send("pointerup", 5, 200 + dx);
+        send("pointerup", 6, 250 + dx);
+        if (withPalm) send("pointerup", 7, 480);
+        await delay(400);
+      });
+    };
+    await swipe(90, true);
+    const afterSwipe = (await loadData())!;
+    assert.equal(afterSwipe.activePage, afterSwipe.notebooks[0].pages[0].id);
+    assert.equal(afterSwipe.notebooks[0].pages[0].strokes.length, 0);
+    await swipe(-90);
     await click("Seitenoptionen");
     assert.equal(
       document.querySelector<HTMLInputElement>(".page-title")?.value,
