@@ -699,7 +699,37 @@ test("the library opens first and each notebook remembers its last page", async 
     const afterSwipe = (await loadData())!;
     assert.equal(afterSwipe.activePage, afterSwipe.notebooks[0].pages[0].id);
     assert.equal(afterSwipe.notebooks[0].pages[0].strokes.length, 0);
-    await swipe(-90);
+    const surface = document.querySelector(".paper-scroll")!;
+    const makeTouch = (
+      identifier: number,
+      clientX: number,
+      clientY: number,
+      touchType = "direct",
+    ) => ({ identifier, clientX, clientY, touchType, target: surface });
+    const sendTouches = (
+      type: string,
+      changedTouches: ReturnType<typeof makeTouch>[],
+    ) => {
+      const event = new window.Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(event, "changedTouches", { value: changedTouches });
+      surface.dispatchEvent(event);
+    };
+    await act(async () => {
+      sendTouches("touchstart", [
+        makeTouch(5, 200, 160),
+        makeTouch(6, 250, 160),
+      ]);
+      sendTouches("touchmove", [
+        makeTouch(5, 201, 166),
+        makeTouch(6, 250, 166),
+      ]);
+      sendTouches("touchmove", [
+        makeTouch(5, 130, 170),
+        makeTouch(6, 180, 168),
+      ]);
+      sendTouches("touchend", [makeTouch(5, 129, 170), makeTouch(6, 179, 168)]);
+      await delay(400);
+    });
     await click("Seitenoptionen");
     assert.equal(
       document.querySelector<HTMLInputElement>(".page-title")?.value,

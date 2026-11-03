@@ -229,3 +229,28 @@ test("a quick, repeated scratch only removes the crossed ink", () => {
     original,
   );
 });
+
+test("scratching part of a word removes the word but keeps adjacent ink", () => {
+  const letter = (x: number, y: number): Stroke => ({
+    ...stroke,
+    id: uid(),
+    points: [
+      { x, y: y + 16, p: 0.5 },
+      { x: x + 4, y, p: 0.5 },
+      { x: x + 8, y: y + 16, p: 0.5 },
+    ],
+  });
+  const word = [letter(50, 40), letter(61, 40), letter(72, 40), letter(83, 40)];
+  const dot = { ...stroke, id: uid(), points: [{ x: 86, y: 31, p: 0.5 }] };
+  const adjacent = [letter(108, 40), letter(119, 40), letter(64, 65)];
+  const scratch = [
+    { x: 60, y: 47, p: 0.5 },
+    { x: 77, y: 50, p: 0.5 },
+    { x: 60, y: 51, p: 0.5 },
+    { x: 78, y: 54, p: 0.5 },
+  ];
+  assert.deepEqual(
+    eraseScratch([...word, dot, ...adjacent], scratch, 440),
+    adjacent,
+  );
+});

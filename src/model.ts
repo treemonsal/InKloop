@@ -337,6 +337,93 @@ export function eraseAlong(
   return changed ? remaining : strokes;
 }
 
+function eraseScratchedWords(
+  strokes: Stroke[],
+  from: Point,
+  to: Point,
+  radius: number,
+) {
+  const clipped = eraseAlong(strokes, from, to, radius);
+  if (clipped === strokes) return strokes;
+
+  const glyphs = strokes
+    .flatMap((stroke) => {
+      if (stroke.tool !== "pen" || !stroke.points.length) return [];
+      let left = Infinity,
+        right = -Infinity,
+        top = Infinity,
+        bottom = -Infinity;
+      for (const { x, y } of stroke.points) {
+        left = Math.min(left, x);
+        right = Math.max(right, x);
+        top = Math.min(top, y);
+        bottom = Math.max(bottom, y);
+      }
+      const height = bottom - top;
+      if (right - left > Math.max(34, height * 11) || height > 64) return [];
+      return [{ stroke, left, right, top, bottom, height }];
+    })
+    .sort((a, b) => a.left - b.left);
+
+  const survivors = new Set(clipped);
+  const words = new Set<Stroke>();
+  for (const anchor of glyphs) {
+    if (survivors.has(anchor.stroke) || words.has(anchor.stroke)) continue;
+    const height = Math.max(12, Math.min(34, anchor.height));
+    const gap = Math.max(5, Math.min(12, height * 0.42));
+    const row = glyphs.filter(
+      (g) =>
+        g.height <= height * 1.8 &&
+        g.bottom >= anchor.top - height * 0.35 &&
+        g.top <= anchor.bottom + height * 0.35 &&
+        Math.abs(g.top + g.bottom - (anchor.top + anchor.bottom)) <=
+          height * 1.4,
+    );
+    const index = row.indexOf(anchor);
+    if (index < 0) continue;
+    let start = 0,
+      end = 0;
+    while (end < row.length) {
+      start = end;
+      let right = row[end++].right;
+      while (end < row.length && row[end].left - right <= gap) {
+        right = Math.max(right, row[end++].right);
+      }
+      if (index < end) break;
+    }
+    const word = row.slice(start, end);
+    if (
+      word.length > 1 ||
+      (anchor.height >= 7 && anchor.stroke.points.length >= 5)
+    ) {
+      for (const glyph of word) words.add(glyph.stroke);
+      const left = word[0].left;
+      const right = Math.max(...word.map((glyph) => glyph.right));
+      const top = Math.min(...word.map((glyph) => glyph.top));
+      for (const glyph of glyphs) {
+        if (
+          glyph.left >= left &&
+          glyph.right <= right &&
+          glyph.height <= 4 &&
+          glyph.right - glyph.left <= 6 &&
+          glyph.bottom < top &&
+          top - glyph.bottom <= height * 0.68
+        ) {
+          words.add(glyph.stroke);
+        }
+      }
+    }
+  }
+  return words.size
+    ? eraseAlong(
+        strokes.filter((stroke) => !words.has(stroke)),
+        from,
+        to,
+        radius,
+      )
+    : clipped;
+}
+
 export function eraseScratch(
   strokes: Stroke[],
   points: Point[],
@@ -411,7 +498,7 @@ export function eraseScratch(
         y: u * dy + middle * dx,
         p: 0.5,
       });
-      const erased = eraseAlong(
+      const erased = eraseScratchedWords(
         strokes,
         at(low + radius),
         at(high - radius),
