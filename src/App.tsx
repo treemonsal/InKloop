@@ -726,6 +726,7 @@ export default function App() {
       const prompt = buildPrompt(source, submission, handoff.samples.length);
       let shared = handoff.sent;
       let automatic = false;
+      let queued = false;
       if (send) {
         try {
           const result = await publishSubmission(
@@ -736,6 +737,7 @@ export default function App() {
             prompt,
           );
           automatic = result.automatic === true;
+          queued = result.queued === true;
           shared = true;
           setData(
             (d) =>
@@ -775,7 +777,11 @@ export default function App() {
         setSelectedSubmission(submission.id);
         setPanelOpen(true);
         setTab("feedback");
-        notify("Abgegeben. ChatGPT wertet die Seite aus.");
+        notify(
+          queued
+            ? "Abgegeben. Das Feedback erscheint hier."
+            : "Abgegeben. ChatGPT wertet die Seite aus.",
+        );
         return;
       }
       if (current.current?.activePage === pageId) {
@@ -1032,7 +1038,7 @@ export default function App() {
         <main className="library">
           <header className="library-top">
             <div className="library-brand">
-              <Logo /> Inkloop <small className="library-version">V17</small>
+              <Logo /> Inkloop <small className="library-version">V18</small>
             </div>
             <div className="topbar-actions">
               <IconButton label="Deine Handschrift" onClick={startProfile}>

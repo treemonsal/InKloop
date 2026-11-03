@@ -131,6 +131,9 @@ async function deletePageCopies(bucket, prefix, pageId, submissionIds) {
   }
   for (const id of ids) {
     await put(bucket, deletedKey(prefix, id), true);
+    if ((await read(bucket, reviewKey(id)))?.prefix === prefix)
+      await bucket.delete(reviewKey(id));
+    await bucket.delete(reviewResultKey(prefix, id));
     const key = submissionKey(prefix, id);
     await bucket.delete(key + ".json");
     await bucket.delete(key + ".png");
@@ -455,6 +458,111 @@ async function signalWork(request, env, bucket, prefix, metadata) {
   return state === "accepted";
 }
 
+const reviewQueue = "review/queue/";
+const reviewKey = (id) => reviewQueue + id + ".json";
+const reviewResultKey = (prefix, id) =>
+  prefix + "review/results/" + id + ".json";
+
+async function enqueueReview(request, env, bucket, prefix, metadata) {
+  if (!env.INKLOOP_REVIEW_KEY || !env.INKLOOP_LEGACY_OWNER_EMAIL) return false;
+  if ((await workspaceScope(request, env)) !== "workspace") return false;
+  const { id } = metadata;
+  if (!(await bucket.get(reviewResultKey(prefix, id))))
+    await bucket.put(reviewKey(id), JSON.stringify({ id, prefix }), {
+      onlyIf: firstWrite,
+    });
+  return true;
+}
+
+async function reviewRelay(request, env) {
+  const supplied = request.headers.get("x-inkloop-review-key") || "";
+  const expected = env.INKLOOP_REVIEW_KEY;
+  if (!expected || supplied.length !== expected.length)
+    return json({ error: "AUTH_REQUIRED" }, 401);
+  let difference = 0;
+  for (let i = 0; i < expected.length; i++)
+    difference |= supplied.charCodeAt(i) ^ expected.charCodeAt(i);
+  if (difference) return json({ error: "AUTH_REQUIRED" }, 401);
+  const bucket = assertBucket(env);
+  if (request.method === "GET") {
+    for await (const { key, value: job } of records(bucket, reviewQueue)) {
+      const submission = submissionKey(job.prefix, job.id);
+      const metadata = await read(bucket, submission + ".json");
+      const image = await bucket.get(submission + ".png");
+      if (
+        !metadata ||
+        !image ||
+        (await bucket.get(deletedKey(job.prefix, job.id)))
+      ) {
+        await bucket.delete(key);
+        continue;
+      }
+      const task = JSON.stringify({
+        id: job.id,
+        task: metadata.task,
+        subject: metadata.subject,
+        language: metadata.language,
+      });
+      const form = new FormData();
+      form.set("task", task);
+      form.set(
+        "image",
+        new Blob([await image.arrayBuffer()], { type: "image/png" }),
+        "answer.png",
+      );
+      return new Response(form, { headers: { "cache-control": "no-store" } });
+    }
+    return new Response(null, {
+      status: 204,
+      headers: { "cache-control": "no-store" },
+    });
+  }
+  if (request.method !== "POST") return json({ error: "METHOD" }, 405);
+  const args = JSON.parse(
+    new TextDecoder().decode(await limitedBody(request, 80_000)),
+  );
+  const id = args.submission_id;
+  if (
+    !validId(id) ||
+    !text(args.transcription, 20_000) ||
+    !text(args.feedback, 20_000)
+  )
+    return json({ error: "INVALID_REVIEW" }, 400);
+  const job = await read(bucket, reviewKey(id));
+  if (!job) return json({ saved: false });
+  const metadata = await read(bucket, submissionKey(job.prefix, id) + ".json");
+  const tombstone = deletedKey(job.prefix, id);
+  if (!metadata || (await bucket.get(tombstone))) {
+    await bucket.delete(reviewKey(id));
+    return json({ error: "DELETED" }, 410);
+  }
+  const result = {
+    type: "response",
+    submissionId: id,
+    notebookId: metadata.notebookId,
+    pageId: metadata.pageId,
+    transcription: args.transcription,
+    feedback: args.feedback,
+    nextTask: "",
+    id: crypto.randomUUID(),
+    createdAt: Date.now(),
+  };
+  const receipt = reviewResultKey(job.prefix, id);
+  const created = await bucket.put(receipt, JSON.stringify(result), {
+    onlyIf: firstWrite,
+  });
+  const saved = created ? result : await read(bucket, receipt);
+  const key = eventKey(job.prefix, saved);
+  await bucket.put(key, JSON.stringify(saved), { onlyIf: firstWrite });
+  if (await bucket.get(tombstone)) {
+    await bucket.delete(key);
+    await bucket.delete(receipt);
+    return json({ error: "DELETED" }, 410);
+  }
+  await bucket.delete(reviewKey(id));
+  return json({ saved: true });
+}
+
 async function rpc(request, env) {
   let message;
   try {
@@ -761,7 +869,15 @@ async function api(request, env) {
       return json({ error: "Diese Abgabe wurde gelöscht." }, 409);
     }
     const automatic = await signalWork(request, env, bucket, prefix, metadata);
-    return json({ ok: true, id: metadata.id, automatic });
+    const queued =
+      !automatic &&
+      (await enqueueReview(request, env, bucket, prefix, metadata));
+    return json({
+      ok: true,
+      id: metadata.id,
+      automatic: automatic || queued,
+      queued,
+    });
   }
   return json({ error: "Not found" }, 404);
 }
@@ -776,6 +892,8 @@ export default {
           headers: { Allow: "POST" },
         });
       }
+      if (url.pathname === "/api/review/relay")
+        return await reviewRelay(request, env);
       if (url.pathname.startsWith("/api/")) return await api(request, env);
       if (!["GET", "HEAD"].includes(request.method))
         return new Response("Method not allowed", { status: 405 });
