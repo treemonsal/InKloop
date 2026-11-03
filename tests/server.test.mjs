@@ -341,3 +341,112 @@ test("public entry keeps owner storage and ChatGPT bridge scoped to the signed-i
   assert.equal((await bridge("workspace")).status, 409);
   assert.equal((await bridge(visitorScope)).status, 200);
 });
+
+test("MCP events verify a callback and deliver a submission once for the matching account", async () => {
+  const hosted = {
+    BUCKET: new Bucket(),
+    INKLOOP_LEGACY_OWNER_EMAIL: "owner@example.test",
+    INKLOOP_WORK_INCLUDED_ONLY: "1",
+  };
+  const owner = {
+    "oai-authenticated-user-email": "owner@example.test",
+    "x-inkloop-workspace": "workspace",
+  };
+  const originalFetch = globalThis.fetch;
+  const deliveries = [];
+  const secret = "whsec_" + Buffer.alloc(32, 7).toString("base64");
+  const url = "https://chatgpt.com/backend-api/test-inkloop";
+  globalThis.fetch = async (target, init) => {
+    assert.equal(target, url);
+    assert.equal(init.redirect, "error");
+    const body = JSON.parse(init.body);
+    const { createHmac } = await import("node:crypto");
+    const signature = createHmac("sha256", Buffer.alloc(32, 7))
+      .update(
+        [
+          init.headers["webhook-id"],
+          init.headers["webhook-timestamp"],
+          init.body,
+        ].join("."),
+      )
+      .digest("base64");
+    assert.equal(init.headers["webhook-signature"], "v1," + signature);
+    if (body.type === "verification")
+      return Response.json({ challenge: body.challenge });
+    deliveries.push(body);
+    return Response.json({ ok: true });
+  };
+  const call = async (method, params = {}, actor = "owner") =>
+    (
+      await worker.fetch(
+        request(
+          "/mcp",
+          "POST",
+          JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+          actor,
+          actor === "owner"
+            ? owner
+            : { "oai-authenticated-user-email": "visitor@example.test" },
+        ),
+        hosted,
+      )
+    ).json();
+  const event = {
+    name: "inkloop.submission.created",
+    arguments: {},
+    delivery: { mode: "webhook", url, secret },
+  };
+  const upload = async () => {
+    const body = new FormData();
+    body.set(
+      "metadata",
+      JSON.stringify({
+        id: "ink-one",
+        createdAt: Date.now(),
+        notebookId: "math",
+        pageId: "one",
+        subject: "Mathematik",
+        language: "de",
+        task: "Private task",
+        prompt: "Private prompt",
+      }),
+    );
+    body.set(
+      "image",
+      new Blob([Uint8Array.from([137, 80, 78, 71])], { type: "image/png" }),
+      "answer.png",
+    );
+    return (
+      await worker.fetch(
+        request("/api/bridge/submission", "POST", body, "owner", owner),
+        hosted,
+      )
+    ).json();
+  };
+  try {
+    assert.ok((await call("server/discover")).result.capabilities.events);
+    assert.equal((await call("events/list")).result.events[0].name, event.name);
+    assert.ok((await call("events/subscribe", event, "visitor")).error);
+    assert.ok(
+      (
+        await call("events/subscribe", {
+          ...event,
+          delivery: { ...event.delivery, url: "https://evil.test/hook" },
+        })
+      ).error,
+    );
+    assert.ok((await call("events/subscribe", event)).result.id);
+    hosted.INKLOOP_WORK_INCLUDED_ONLY = "0";
+    assert.equal((await upload()).automatic, false);
+    assert.equal(deliveries.length, 0);
+    hosted.INKLOOP_WORK_INCLUDED_ONLY = "1";
+    assert.equal((await upload()).automatic, true);
+    assert.equal((await upload()).automatic, true);
+    assert.equal(deliveries.length, 1);
+    assert.deepEqual(deliveries[0].data, { submission_id: "ink-one" });
+    await call("events/unsubscribe", event);
+    assert.equal((await upload()).automatic, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

@@ -725,9 +725,17 @@ export default function App() {
       const blob = await submissionImage(source, submission, handoff.samples);
       const prompt = buildPrompt(source, submission, handoff.samples.length);
       let shared = handoff.sent;
+      let automatic = false;
       if (send) {
         try {
-          await publishSubmission(source, pageId, submission, blob, prompt);
+          const result = await publishSubmission(
+            source,
+            pageId,
+            submission,
+            blob,
+            prompt,
+          );
+          automatic = result.automatic === true;
           shared = true;
           setData(
             (d) =>
@@ -762,6 +770,13 @@ export default function App() {
             "Senden fehlgeschlagen. Du kannst es bei dieser Abgabe erneut versuchen.",
           );
         }
+      }
+      if (automatic && current.current?.activePage === pageId) {
+        setSelectedSubmission(submission.id);
+        setPanelOpen(true);
+        setTab("feedback");
+        notify("Abgegeben. ChatGPT wertet die Seite aus.");
+        return;
       }
       if (current.current?.activePage === pageId) {
         setHandoffStep("copy");
@@ -1017,7 +1032,7 @@ export default function App() {
         <main className="library">
           <header className="library-top">
             <div className="library-brand">
-              <Logo /> Inkloop <small className="library-version">V16</small>
+              <Logo /> Inkloop <small className="library-version">V17</small>
             </div>
             <div className="topbar-actions">
               <IconButton label="Deine Handschrift" onClick={startProfile}>

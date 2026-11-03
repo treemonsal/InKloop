@@ -226,6 +226,235 @@ async function pendingEvents(bucket, prefix, after) {
       : after,
   };
 }
+const submissionEvent = {
+  name: "inkloop.submission.created",
+  description:
+    "A handwritten Inkloop answer was submitted. Use inkloop_read_submission with the supplied submission_id, then save the transcription and feedback to that exact submission with inkloop_write_response.",
+  delivery: ["webhook"],
+  inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  payloadSchema: {
+    type: "object",
+    properties: { submission_id: { type: "string" } },
+    required: ["submission_id"],
+    additionalProperties: false,
+  },
+};
+const capabilities = { tools: {}, events: {} };
+const subscriptionKey = (prefix) => prefix + "work/subscription.json";
+
+function workCallback(value) {
+  if (typeof value !== "string" || value.length > 2048) return null;
+  try {
+    const url = new URL(value);
+    const firstParty =
+      url.hostname === "chatgpt.com" ||
+      url.hostname.endsWith(".chatgpt.com") ||
+      url.hostname === "api.openai.com";
+    if (
+      firstParty &&
+      url.protocol === "https:" &&
+      !url.port &&
+      !url.username &&
+      !url.password &&
+      !url.hash
+    )
+      return url.href;
+  } catch {}
+  return null;
+}
+
+function webhookKey(secret) {
+  if (
+    typeof secret !== "string" ||
+    !/^whsec_[A-Za-z0-9+/]{32,88}={0,2}$/.test(secret)
+  )
+    return null;
+  try {
+    const bytes = Uint8Array.from(atob(secret.slice(6)), (char) =>
+      char.charCodeAt(0),
+    );
+    return bytes.length >= 24 && bytes.length <= 64 ? bytes : null;
+  } catch {
+    return null;
+  }
+}
+
+async function postWorkEvent(subscription, id, payload) {
+  const url = workCallback(subscription.url);
+  const secret = webhookKey(subscription.secret);
+  if (!url || !secret) throw new Error("Invalid callback");
+  const encoder = new TextEncoder();
+  const body = JSON.stringify(payload);
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const key = await crypto.subtle.importKey(
+    "raw",
+    secret,
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const signature = await crypto.subtle.sign(
+    "HMAC",
+    key,
+    encoder.encode(id + "." + timestamp + "." + body),
+  );
+  return fetch(url, {
+    method: "POST",
+    redirect: "error",
+    signal: AbortSignal.timeout(4500),
+    headers: {
+      "content-type": "application/json",
+      "webhook-id": id,
+      "webhook-timestamp": timestamp,
+      "webhook-signature":
+        "v1," + btoa(String.fromCharCode(...new Uint8Array(signature))),
+      "X-MCP-Subscription-Id": subscription.id,
+    },
+    body,
+  });
+}
+
+async function workEventRpc(request, env, message, reply) {
+  const error = (code, messageText, data) =>
+    json({
+      jsonrpc: "2.0",
+      id: message.id ?? null,
+      error: { code, message: messageText, data },
+    });
+  let owner;
+  try {
+    owner = (await workspaceScope(request, env)) === "workspace";
+  } catch {}
+  if (!owner)
+    return error(-32001, "Inkloop account is not authorized for Work events.");
+  if (message.method === "events/list")
+    return reply({ events: [submissionEvent] });
+  if (!["events/subscribe", "events/unsubscribe"].includes(message.method))
+    return error(-32601, "Unknown event method");
+
+  const { name, arguments: args = {}, delivery, ttlMs } = message.params || {};
+  const url = workCallback(delivery?.url);
+  if (
+    name !== submissionEvent.name ||
+    !args ||
+    Array.isArray(args) ||
+    typeof args !== "object" ||
+    Object.keys(args).length ||
+    delivery?.mode !== "webhook" ||
+    !url
+  )
+    return error(-32602, "Unsupported Inkloop event or callback.");
+  const bucket = assertBucket(env);
+  const prefix = prefixFor(request);
+  const key = subscriptionKey(prefix);
+  const saved = await read(bucket, key);
+  if (message.method === "events/unsubscribe") {
+    if (saved?.url === url) await bucket.delete(key);
+    return reply({});
+  }
+  if (
+    !webhookKey(delivery.secret) ||
+    (ttlMs != null && (!Number.isSafeInteger(ttlMs) || ttlMs <= 0))
+  )
+    return error(-32602, "Invalid webhook secret or expiry.");
+  if (saved && saved.expires > Date.now() && saved.url !== url)
+    return error(
+      -32602,
+      "Stop the existing Inkloop Work task before connecting another.",
+    );
+
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(prefix + url),
+  );
+  const id =
+    "sub_" +
+    Array.from(new Uint8Array(digest), (b) =>
+      b.toString(16).padStart(2, "0"),
+    ).join("");
+  const expires = Date.now() + Math.min(ttlMs ?? 7 * 86400000, 7 * 86400000);
+  const subscription = { id, url, secret: delivery.secret, expires };
+  if (
+    saved?.url !== url ||
+    saved.secret !== subscription.secret ||
+    saved.expires <= Date.now()
+  ) {
+    const challenge = crypto.randomUUID();
+    try {
+      const res = await postWorkEvent(
+        subscription,
+        "verify_" + crypto.randomUUID(),
+        {
+          type: "verification",
+          challenge,
+        },
+      );
+      const result =
+        res.ok &&
+        JSON.parse(new TextDecoder().decode(await limitedBody(res, 4096)));
+      if (
+        typeof result?.challenge !== "string" ||
+        result.challenge.length !== challenge.length
+      )
+        throw new Error("Invalid challenge");
+      let diff = 0;
+      for (let i = 0; i < challenge.length; i++)
+        diff |= challenge.charCodeAt(i) ^ result.challenge.charCodeAt(i);
+      if (diff !== 0) throw new Error("Invalid challenge");
+    } catch {
+      return error(-32015, "Callback verification failed.", {
+        reason: "challenge_failed",
+      });
+    }
+  }
+  await put(bucket, key, subscription);
+  return reply({
+    id,
+    refreshBefore: new Date(expires).toISOString(),
+    cursor: null,
+    truncated: false,
+  });
+}
+
+async function signalWork(request, env, bucket, prefix, metadata) {
+  if (
+    env.INKLOOP_WORK_INCLUDED_ONLY !== "1" ||
+    !env.INKLOOP_LEGACY_OWNER_EMAIL ||
+    (await workspaceScope(request, env)) !== "workspace"
+  )
+    return false;
+  const subscription = await read(bucket, subscriptionKey(prefix));
+  if (!subscription || subscription.expires <= Date.now()) return false;
+  const eventId = "inkloop_" + metadata.id;
+  const deliveryKey = prefix + "work/deliveries/" + metadata.id;
+  const claimed = await bucket.put(
+    deliveryKey,
+    JSON.stringify({ state: "sending" }),
+    { onlyIf: firstWrite },
+  );
+  if (!claimed) {
+    const previous = await read(bucket, deliveryKey);
+    return previous?.state === "accepted" || previous?.state === "sending";
+  }
+  const payload = {
+    eventId,
+    name: submissionEvent.name,
+    timestamp: new Date().toISOString(),
+    data: { submission_id: metadata.id },
+    cursor: null,
+  };
+  let state = "failed";
+  try {
+    const response = await postWorkEvent(subscription, eventId, payload);
+    if (response.ok) state = "accepted";
+    if (response.status === 410) await bucket.delete(subscriptionKey(prefix));
+  } catch {
+    // Delivery may already have started. A repeated upload must not start another run.
+  }
+  await put(bucket, deliveryKey, { state });
+  return state === "accepted";
+}
+
 async function rpc(request, env) {
   let message;
   try {
@@ -245,11 +474,15 @@ async function rpc(request, env) {
   const reply = (result) =>
     json({ jsonrpc: "2.0", id: message.id ?? null, result });
   if (message.method === "server/discover")
-    return reply({ supportedVersions: [VERSION], capabilities: { tools: {} } });
+    return reply({
+      resultType: "complete",
+      supportedVersions: [VERSION],
+      capabilities,
+    });
   if (message.method === "initialize")
     return reply({
       protocolVersion: VERSION,
-      capabilities: { tools: {} },
+      capabilities,
       serverInfo: { name: "Inkloop", version: "1.1.0" },
       instructions:
         "Inkloop is the user’s handwritten learning notebook. Use its tools to read submitted images, deliver faithful transcriptions and tutoring feedback, and place tasks into the notebook. No paid model API is invoked by Inkloop.",
@@ -258,6 +491,8 @@ async function rpc(request, env) {
     return new Response(null, { status: 202 });
   if (message.method === "ping") return reply({});
   if (message.method === "tools/list") return reply({ tools });
+  if (message.method?.startsWith("events/"))
+    return workEventRpc(request, env, message, reply);
   if (message.method !== "tools/call")
     return json({
       jsonrpc: "2.0",
@@ -525,7 +760,8 @@ async function api(request, env) {
         await bucket.delete(prefix + "latest.json");
       return json({ error: "Diese Abgabe wurde gelöscht." }, 409);
     }
-    return json({ ok: true, id: metadata.id });
+    const automatic = await signalWork(request, env, bucket, prefix, metadata);
+    return json({ ok: true, id: metadata.id, automatic });
   }
   return json({ error: "Not found" }, 404);
 }
