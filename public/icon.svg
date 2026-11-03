@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
   <title>Inkloop</title>
-  <rect width="512" height="512" fill="#111113"/>
-  <path d="M137 332c43 6 101-37 141-91 32-43 42-91 19-100-30-12-76 38-98 93-22 54-15 111 21 123 40 13 86-22 120-64" fill="none" stroke="#f3f3f5" stroke-width="31" stroke-linecap="round" stroke-linejoin="round"/>
-  <circle cx="374" cy="251" r="15.5" fill="#a7c4ff"/>
+  <rect width="512" height="512" fill="#141413"/>
+  <path d="M137 332c43 6 101-37 141-91 32-43 42-91 19-100-30-12-76 38-98 93-22 54-15 111 21 123 40 13 86-22 120-64" fill="none" stroke="#faf9f5" stroke-width="31" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="374" cy="251" r="15.5" fill="#d97757"/>
 </svg>

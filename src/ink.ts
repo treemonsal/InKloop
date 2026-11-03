@@ -2,6 +2,9 @@ import type { Notebook, Point, Sample, Stroke, Submission } from "./model";
 export const PAGE_W = 900,
   PAGE_H = 1200;
 const colorMap: Record<string, string> = {
+  "#faf9f5": "#27251f",
+  "#b0aea5": "#625e56",
+  "#d97757": "#a34b31",
   "#f4f5f7": "#222329",
   "#a9abb2": "#5c6069",
   "#a7c4ff": "#30518f",

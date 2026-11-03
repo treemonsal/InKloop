@@ -1,20 +1,41 @@
+@font-face {
+  font-family: "Poppins";
+  src: url("./fonts/poppins-600.woff2") format("woff2");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Lora";
+  src: url("./fonts/lora.woff2") format("woff2");
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Lora";
+  src: url("./fonts/lora-italic.woff2") format("woff2");
+  font-weight: 400 700;
+  font-style: italic;
+  font-display: swap;
+}
 :root {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  color: #f3f3f5;
-  background: #0c0c0e;
+  font-family: "Lora", Georgia, serif;
+  color: #faf9f5;
+  background: #141413;
   font-synthesis: none;
   font-weight: 400;
   font-size: 14px;
   line-height: 1.55;
   color-scheme: dark;
-  --bg: #0c0c0e;
-  --surface: #151517;
-  --surface-raised: #232326;
+  --bg: #141413;
+  --surface: #1b1a18;
+  --surface-raised: #292823;
   --border: #ffffff0f;
-  --muted: #ababb2;
-  --text: #f3f3f5;
-  --accent: #a7c4ff;
-  --green: #ababb2;
+  --muted: #b0aea5;
+  --text: #faf9f5;
+  --accent: #d97757;
+  --green: #b0aea5;
   --sidebar: 238px;
 }
 * {
@@ -173,7 +194,7 @@ small,
   color: #242424;
 }
 .primary:hover:not(:disabled) {
-  background: #bad1ff;
+  background: #ed9274;
 }
 .secondary {
   background: #ffffff05;
@@ -276,7 +297,7 @@ small,
   justify-content: space-between;
   gap: 12px;
   padding: env(safe-area-inset-top) 30px 0;
-  background: #0c0c0ee8;
+  background: #141413e8;
   backdrop-filter: blur(18px);
 }
 .topbar-actions {
@@ -349,7 +370,7 @@ small,
   color: #999999;
 }
 .canvas-shell {
-  background: #19191c;
+  background: #1e1d19;
   border: 1px solid #ffffff0a;
   border-radius: 13px;
   overflow: hidden;
@@ -454,7 +475,7 @@ small,
   aspect-ratio: 3/4;
   flex-shrink: 0;
   min-width: 100%;
-  background-color: #19191c;
+  background-color: #1e1d19;
   overflow: hidden;
   transform-origin: top left;
 }
@@ -563,7 +584,7 @@ small,
   border-left: 1px solid var(--border);
   display: flex;
   flex-direction: column;
-  background: #111113;
+  background: #181714;
   padding: 0 24px;
   min-width: 0;
 }
@@ -590,7 +611,7 @@ small,
   left: 0;
   right: 0;
   height: 2px;
-  background: #a7c4ff;
+  background: #d97757;
   content: "";
   border-radius: 2px;
 }
@@ -1629,8 +1650,8 @@ input[type="checkbox"] {
 }
 .plugin-handoff {
   padding: 18px;
-  border: 1px solid #a7c4ff30;
-  background: #a7c4ff08;
+  border: 1px solid #d9775730;
+  background: #d9775708;
   border-radius: 11px;
   margin-bottom: 24px;
 }
@@ -1661,7 +1682,7 @@ input[type="checkbox"] {
 /* Library and writing workspace */
 :root {
   --header: calc(3.75rem + env(safe-area-inset-top));
-  --surface-paper: #19191c;
+  --surface-paper: #1e1d19;
   --sidebar: 0px;
   --border: #ffffff1a;
   font-optical-sizing: auto;
@@ -1755,15 +1776,15 @@ input[type="checkbox"] {
   text-align: left;
   padding: 0.55rem 0.55rem 0.9rem;
   border-radius: 1.12rem;
-  background: #19191b;
+  background: #201f1b;
   border: 1px solid var(--border);
 }
 .library-notebook:hover {
-  background: #222225;
+  background: #2a2924;
   border-color: #ffffff3b;
 }
 .library-notebook:active {
-  background: #28282c;
+  background: #302e29;
 }
 .notebook-cover {
   grid-column: 1 / -1;
@@ -1774,7 +1795,7 @@ input[type="checkbox"] {
   overflow: hidden;
   isolation: isolate;
   border-radius: 0.78rem;
-  background: radial-gradient(ellipse at 60% 10%, #39393e, #242427 74%);
+  background: radial-gradient(ellipse at 60% 10%, #3b3831, #26241f 74%);
   border: 1px solid #ffffff12;
 }
 .cover-icon {
@@ -1782,8 +1803,8 @@ input[type="checkbox"] {
   top: 0.75rem;
   left: 0.75rem;
   padding: 0.48rem;
-  color: #e5e5e8;
-  background: #161618c9;
+  color: #e8e6dc;
+  background: #1b1a17c9;
   border: 1px solid #ffffff20;
   border-radius: 0.55rem;
 }
@@ -1794,12 +1815,12 @@ input[type="checkbox"] {
   aspect-ratio: 3/4;
   border-radius: 0.15rem 0.48rem 0.48rem 0.15rem;
   border: 1px solid #ffffff36;
-  border-left: 0.28rem solid #77777d;
-  background-color: #202024;
+  border-left: 0.28rem solid #726f64;
+  background-color: #24221d;
   background-size: 11px 11px;
   transform: translateX(0.65rem) rotate(-7deg);
   box-shadow:
-    0.34rem 0.24rem 0 #343438,
+    0.34rem 0.24rem 0 #39362f,
     0.34rem 0.24rem 0 1px #ffffff25,
     0 0.55rem 1.35rem #0007;
 }
@@ -1836,14 +1857,14 @@ input[type="checkbox"] {
   width: 100%;
   padding: 0.88rem 1rem;
   margin: 0 0 1rem;
-  background: #a7c4ff12;
+  background: #d9775712;
   color: var(--accent);
-  border: 1px solid #a7c4ff36;
+  border: 1px solid #d9775736;
   border-radius: 0.9rem;
   text-align: left;
 }
 .resume-notebook:hover {
-  background: #a7c4ff23;
+  background: #d9775723;
 }
 .resume-notebook span {
   display: grid;
@@ -1884,7 +1905,7 @@ input[type="checkbox"] {
   flex-shrink: 0;
   position: relative;
   z-index: 8;
-  background: #0c0c0ef2;
+  background: #141413f2;
   padding-inline: max(0.75rem, env(safe-area-inset-left))
     max(0.75rem, env(safe-area-inset-right));
 }
@@ -1906,9 +1927,9 @@ input[type="checkbox"] {
   white-space: nowrap;
 }
 .panel-toggle[aria-expanded="true"] {
-  background: #a7c4ff16;
+  background: #d9775716;
   color: var(--accent);
-  border-color: #a7c4ff45;
+  border-color: #d9775745;
 }
 .save-state {
   color: var(--muted);
@@ -1973,7 +1994,7 @@ input[type="checkbox"] {
 }
 .ink-toolbar .icon-button.active {
   color: var(--accent);
-  background: #a7c4ff19;
+  background: #d9775719;
 }
 .toolbar-group,
 .ink-colors {
@@ -2008,7 +2029,7 @@ input[type="checkbox"] {
 .learning-panel {
   min-height: 0;
   padding: 0.9rem clamp(0.8rem, 2vw, 1.4rem) env(safe-area-inset-bottom);
-  background: #111113;
+  background: #181714;
 }
 .panel-tabs {
   flex-shrink: 0;
@@ -2095,7 +2116,7 @@ input[type="checkbox"] {
 }
 .page-link.selected {
   color: var(--accent);
-  background: #a7c4ff14;
+  background: #d9775714;
 }
 .page-link-label {
   font-size: 1rem;
@@ -2277,7 +2298,7 @@ input[type="checkbox"] {
   border-radius: 1rem;
   border: 1px solid #ffffff24;
   z-index: 2;
-  background: #242427eb;
+  background: #26241feb;
   box-shadow: 0 0.35rem 1rem #0008;
   padding-inline: 0.65rem;
 }
@@ -2303,7 +2324,89 @@ input[type="checkbox"] {
 }
 @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
   .writing-area .ink-toolbar {
-    background: #242427;
+    background: #26241f;
     backdrop-filter: none;
+  }
+}
+
+/* Warm notebook edition */
+.library-brand,
+.library-heading h1,
+.modal-heading h2,
+.page-title {
+  font-family: "Poppins", Arial, sans-serif;
+  font-weight: 600;
+}
+.library-version {
+  text-transform: none;
+  font-family: "Lora", Georgia, serif;
+}
+.library-content {
+  width: min(100%, 57rem);
+}
+.library-heading {
+  padding-bottom: 1.1rem;
+  border-bottom: 1px solid #e8e6dc24;
+}
+.library-heading h1 {
+  font-size: clamp(2.35rem, 6vw, 4.15rem);
+  letter-spacing: -0.045em;
+}
+.library-list {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr));
+}
+.library-notebook {
+  grid-template-columns: clamp(6.2rem, 20vw, 8.2rem) minmax(0, 1fr) auto;
+  grid-template-rows: 1fr;
+  gap: 0.85rem;
+  min-height: 8.4rem;
+  padding: 0.55rem;
+  border-radius: 0.8rem;
+}
+.notebook-cover {
+  grid-column: auto;
+  height: 7.3rem;
+  border-radius: 0.45rem;
+  background: linear-gradient(135deg, #3d392f, #2b2923 68%);
+}
+.cover-icon {
+  display: none;
+}
+.cover-paper {
+  width: 3.9rem;
+  border-left-color: #d97757;
+  transform: none;
+}
+.library-name {
+  padding: 0;
+  gap: 0.4rem;
+  font-size: 1.15rem;
+}
+.library-arrow {
+  margin-inline-end: 0.32rem;
+}
+.primary {
+  color: #141413;
+}
+.topbar,
+.ink-toolbar,
+.panel-tabs,
+.save-state,
+.canvas-footer,
+.writing-bottom {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+.writing-area .ink-toolbar {
+  background: #292823ee;
+  border-radius: 1.8rem;
+}
+@media (max-width: 510px) {
+  .library-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .writing-area .ink-toolbar {
+    background: #292823;
   }
 }
