@@ -19,6 +19,7 @@ const window = new Window({
   width: 1280,
   height: 800,
 });
+Object.defineProperty(window, "devicePixelRatio", { value: 2 });
 window.document.write("<!doctype html><html><head></head><body></body></html>");
 Object.defineProperty(window.document, "compatMode", {
   value: "CSS1Compat",
@@ -65,6 +66,7 @@ Object.defineProperty(globalThis, "BroadcastChannel", {
 const no = () => {};
 const ctx = {
   clearRect: no,
+  setTransform: no,
   save: no,
   restore: no,
   beginPath: no,
@@ -341,22 +343,28 @@ test("four handwriting references replace the profile only after completion and 
     await delay(80);
   });
   await click("Deine Handschrift");
-  await click("Schließen");
+  await click("Schliessen");
   assert.equal((await loadData())!.samples[0].id, "old-reference");
   await click("Deine Handschrift");
   for (let step = 0; step < 4; step++) {
-    const canvas = document.querySelector('dialog [data-testid="ink-canvas"]')!;
-    assert.ok(canvas);
+    const canvas = document.querySelector<HTMLCanvasElement>(
+      'dialog [data-testid="ink-canvas"]',
+    )!;
+    assert.equal(canvas.style.touchAction, "none");
+    assert.equal(canvas.width, 1800);
     await act(async () => {
-      for (const [type, x] of [
-        ["pointerdown", 60],
-        ["pointermove", 110],
-        ["pointerup", 120],
+      for (const [type, x, pointerType] of [
+        ["pointerdown", 80, "touch"],
+        ["pointerdown", 60, "pen"],
+        ["pointermove", 90, "touch"],
+        ["pointermove", 60.2, "pen"],
+        ["pointerup", 60.3, "pen"],
+        ["pointerup", 91, "touch"],
       ] as const)
         canvas.dispatchEvent(
           new window.PointerEvent(type, {
-            pointerId: 3,
-            pointerType: "pen",
+            pointerId: pointerType === "pen" ? 3 : 4,
+            pointerType,
             button: 0,
             clientX: x,
             clientY: 70 + step * 2,
@@ -372,7 +380,11 @@ test("four handwriting references replace the profile only after completion and 
   });
   const saved = (await loadData())!;
   assert.equal(saved.samples.length, 4);
-  assert.ok(saved.samples.every((s) => s.strokes.length === 1));
+  assert.ok(
+    saved.samples.every(
+      (s) => s.strokes.length === 1 && s.strokes[0].points.length >= 2,
+    ),
+  );
   assert.notEqual(saved.samples[0].id, "old-reference");
   assert.equal(saved.notebooks[0].pages[0].strokes.length, 0);
   await act(async () => {
@@ -560,7 +572,7 @@ test("an offline submission can be sent later without creating a duplicate", asy
     });
     const local = (await loadData())!.notebooks[1].pages[0].submissions[0];
     assert.equal(uploadedId, undefined);
-    await click("Schließen");
+    await click("Schliessen");
     online = true;
     await click("Erneut an ChatGPT senden");
     await act(async () => {
@@ -571,7 +583,7 @@ test("an offline submission can be sent later without creating a duplicate", asy
     assert.equal(submissions.length, 1);
     assert.equal(submissions[0].handoff?.sent, true);
     assert.equal(submissions[0].handoff?.subject, "FRW");
-    await click("Schließen");
+    await click("Schliessen");
     returnFeedback = true;
     await act(async () => {
       window.dispatchEvent(new window.Event("focus"));
@@ -614,18 +626,55 @@ test("the library opens first and each notebook remembers its last page", async 
     await click("Mathematik");
     await click("Seiten");
     await click("Neue Seite");
+    await click("Seitenoptionen");
     assert.equal(
       document.querySelector<HTMLInputElement>(".page-title")?.value,
       "Seite 2",
     );
+    await click("Schliessen");
     await click("Alle Lernhefte");
     await click("Finanz- & Rechnungswesen");
     await click("Alle Lernhefte");
     await click("Mathematik");
+    await click("Seitenoptionen");
     assert.equal(
       document.querySelector<HTMLInputElement>(".page-title")?.value,
       "Seite 2",
     );
+    assert.ok(
+      document.querySelector('.topbar [aria-label="Schreibwerkzeuge"]'),
+    );
+    assert.equal(document.querySelector(".writing-bottom"), null);
+    const language = document.querySelector<HTMLSelectElement>(
+      'select[aria-label="Seitensprache"]',
+    )!;
+    assert.equal(language.value, "de");
+    await act(async () => {
+      language.value = "en";
+      language.dispatchEvent(new window.Event("change", { bubbles: true }));
+      await delay(400);
+    });
+    const updated = (await loadData())!.notebooks[0];
+    assert.equal(updated.pages[1].language, "en");
+    assert.equal(updated.pages[0].language ?? updated.language, "de");
+    await click("Schliessen");
+    await click("Alle Lernhefte");
+    for (const name of [
+      "Mathematik",
+      "Finanz- & Rechnungswesen",
+      "Wirtschaft & Recht",
+    ]) {
+      await click("Optionen für " + name);
+      await click("Abbrechen");
+      assert.ok(document.querySelector(`[aria-label="${name}"]`));
+      await click("Optionen für " + name);
+      await click("Lernheft löschen");
+    }
+    await act(async () => {
+      await delay(400);
+    });
+    assert.deepEqual((await loadData())!.notebooks, []);
+    assert.ok(document.body.textContent?.includes("Keine Lernhefte"));
   } finally {
     await act(async () => {
       app.unmount();

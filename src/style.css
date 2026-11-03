@@ -867,8 +867,9 @@ textarea::placeholder {
   margin: 15px 0;
 }
 .sample-surface {
-  height: 240px;
-  overflow: auto;
+  height: clamp(165px, 33dvh, 260px);
+  overflow: hidden;
+  touch-action: none;
   border: 1px solid var(--border);
   border-radius: 9px;
 }
@@ -1476,9 +1477,6 @@ input[type="checkbox"] {
   }
   .sample-target {
     font-size: 15px;
-  }
-  .sample-surface {
-    height: 240px;
   }
   .canvas-footer {
     padding: 0 7px;
@@ -2241,56 +2239,128 @@ input[type="checkbox"] {
   }
 }
 
-/* Float the tool palette over the scrollable page. */
 .editor-navigation .library-back {
   width: auto;
   padding-inline: 0.35rem 0.65rem;
   color: var(--accent);
   gap: 0.12rem;
 }
-.page-subtitle > span {
-  color: var(--muted);
+.app-main .topbar {
+  display: grid;
+  grid-template-columns: minmax(0, max-content) minmax(0, max-content) 1fr;
+  height: var(--header);
+  gap: 0.4rem clamp(0.45rem, 1.4vw, 1.2rem);
+  padding-top: env(safe-area-inset-top);
+  background: var(--bg);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.editor-tools {
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+  min-width: 0;
+}
+.app-main .topbar-actions {
+  justify-self: end;
+}
+.editor-tools .ink-toolbar {
+  position: relative;
+  margin: 0;
+  padding-inline: 0.45rem;
+  height: 46px;
+  min-height: 46px;
+  min-width: 0;
+}
+.writing-area,
+.panel-hidden .writing-area {
+  padding: 0 env(safe-area-inset-right) env(safe-area-inset-bottom)
+    env(safe-area-inset-left);
 }
 .writing-area .canvas-shell {
-  --tool-rail: 3.25rem;
-}
-.writing-area .ink-toolbar {
-  position: absolute;
-  inset: 0.65rem 0 auto;
-  margin-inline: auto;
-  width: max-content;
-  max-width: calc(100% - 1rem);
-  border-radius: 1rem;
-  border: 1px solid #ffffff24;
-  z-index: 2;
-  background: #242427eb;
-  box-shadow: 0 0.2rem 0.6rem #0005;
-  padding-inline: 0.65rem;
+  border: 0;
+  border-radius: 0;
 }
 .writing-area .paper-holder {
-  padding-top: var(--tool-rail);
   background: var(--surface-paper);
 }
-.writing-area .paper {
-  border-top: 1px solid #ffffff13;
+.ink-colors .color-button {
+  display: grid;
+  place-items: center;
 }
-@media (max-width: 560px) {
+.ink-colors .color-button::before,
+.ink-colors .color-button.selected::after {
+  position: static;
+  grid-area: 1 / 1;
+}
+.library-list li {
+  position: relative;
+}
+.library-notebook {
+  grid-template-columns: minmax(0, 1fr);
+}
+.notebook-options {
+  position: absolute;
+  inset: 0.8rem 0.8rem auto auto;
+  z-index: 1;
+  width: 44px;
+  height: 44px;
+  background: var(--surface);
+}
+.notebook-options:hover:not(:disabled) {
+  background: var(--surface-raised);
+}
+.page-settings {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  margin-block: 0.75rem;
+}
+.page-settings label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.page-settings select {
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  min-height: 36px;
+  padding-inline: 0.45rem;
+}
+.modal .page-title {
+  font-size: 1rem;
+  padding-inline: 0.65rem;
+}
+@media (max-width: 920px) {
+  .app-main,
+  .sidebar.visible,
+  .sidebar-scrim {
+    --header: calc(7.35rem + env(safe-area-inset-top));
+  }
+  .app-main .topbar {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: minmax(0, 1fr) 49px;
+    padding-bottom: 0.3rem;
+  }
+  .app-main .topbar-actions {
+    grid-area: 1 / 2;
+  }
+  .editor-tools {
+    grid-column: 1 / -1;
+  }
+}
+@media (max-width: 480px) {
   .editor-navigation .library-back {
     padding-inline: 0;
   }
-  .library-back span {
-    display: none;
+  .editor-tools .ink-toolbar {
+    padding-inline: 0.25rem;
   }
-}
-@media (pointer: coarse) {
-  .writing-area .canvas-shell {
-    --tool-rail: 3.6rem;
-  }
-}
-@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
-  .writing-area .ink-toolbar {
-    background: #242427;
-    backdrop-filter: none;
+  .editor-tools .toolbar-divider {
+    margin-inline: 0;
   }
 }
 
@@ -2312,14 +2382,14 @@ textarea {
   background: rgb(23 24 27 / 0.32);
   --lg-tint: rgb(23 24 27 / 0.32);
 }
-.writing-area .ink-toolbar.liquid-ui {
+.editor-tools .ink-toolbar.liquid-ui {
   border-radius: 20px;
   border-color: #ffffff32;
   background: rgb(24 25 28 / 0.3);
   --lg-tint: rgb(24 25 28 / 0.3);
 }
 .topbar .topbar-actions.liquid-ui.lg-host,
-.writing-area .ink-toolbar.liquid-ui.lg-host {
+.editor-tools .ink-toolbar.liquid-ui.lg-host {
   background: transparent;
   backdrop-filter: none;
 }
@@ -2342,7 +2412,7 @@ textarea {
 .topbar .liquid-ui .submit-button {
   border-radius: 13px;
 }
-.writing-area .ink-toolbar.liquid-ui .icon-button {
+.editor-tools .ink-toolbar.liquid-ui .icon-button {
   border-radius: 12px;
 }
 .learning-panel .panel-tabs {
@@ -2365,7 +2435,7 @@ textarea {
 }
 @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
   .topbar .topbar-actions.liquid-ui,
-  .writing-area .ink-toolbar.liquid-ui {
+  .editor-tools .ink-toolbar.liquid-ui {
     background: #232426;
     backdrop-filter: none;
     border-color: #ffffff50;

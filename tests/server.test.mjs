@@ -271,3 +271,32 @@ test("deleting a page removes private copies and feedback with an idempotent ret
   assert.deepEqual(events.events, []);
   assert.equal((await submit("delete")).status, 409);
 });
+
+test("an empty library replaces the last published notebook index", async () => {
+  const actor = "empty-library";
+  const empty = { activeNotebook: "", activePage: "", notebooks: [] };
+  const send = (value) =>
+    worker.fetch(
+      request("/api/bridge/workspace", "PUT", JSON.stringify(value), actor),
+      env,
+    );
+  const notebook = {
+    id: "math",
+    name: "Mathematik",
+    subject: "Mathematik",
+    language: "de",
+  };
+  assert.equal(
+    (
+      await send({
+        activeNotebook: "math",
+        activePage: "page-1",
+        notebooks: [notebook],
+      })
+    ).status,
+    200,
+  );
+  assert.equal((await send(empty)).status, 200);
+  const result = await rpc("inkloop_get_workspace", {}, actor);
+  assert.deepEqual(JSON.parse(result.result.content[0].text).workspace, empty);
+});

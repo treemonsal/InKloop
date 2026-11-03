@@ -14,6 +14,7 @@ export type Page = {
   task: string;
   strokes: Stroke[];
   paper: Paper;
+  language?: "de" | "en";
   updatedAt: number;
   submissions: Submission[];
 };
@@ -472,7 +473,6 @@ export function validateData(d: unknown): AppData {
     d.version !== 1 ||
     (d.bridgeCursor !== undefined && !string(d.bridgeCursor, 100)) ||
     !Array.isArray(d.notebooks) ||
-    !d.notebooks.length ||
     !string(d.activeNotebook, 100) ||
     !string(d.activePage, 100) ||
     typeof d.onboardingDone !== "boolean" ||
@@ -531,6 +531,9 @@ export function validateData(d: unknown): AppData {
             unique(p.id) &&
             string(p.title, 150) &&
             string(p.task) &&
+            (p.language === undefined ||
+              p.language === "de" ||
+              p.language === "en") &&
             validStrokes(p.strokes) &&
             ["grid", "ruled", "dots", "blank"].includes(p.paper as string) &&
             finite(p.updatedAt) &&
@@ -543,6 +546,8 @@ export function validateData(d: unknown): AppData {
   if (!d.samples.every((s) => validSample(s) && unique(s.id)))
     throw new Error("Die Handschriftreferenzen sind ungültig.");
   const result = d as unknown as AppData;
+  if (!result.notebooks.length && !result.activeNotebook && !result.activePage)
+    return result;
   const active = result.notebooks.find((n) => n.id === result.activeNotebook);
   if (!active || !active.pages.some((p) => p.id === result.activePage))
     throw new Error("Die aktive Seite fehlt in der Sicherung.");

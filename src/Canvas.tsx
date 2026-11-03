@@ -16,6 +16,7 @@ type Props = {
   color: string;
   width: number;
   touchWriting: boolean;
+  lockTouchScroll?: boolean;
   scratchToErase?: boolean;
   paper: Paper;
   zoom?: number;
@@ -29,6 +30,7 @@ export default function InkCanvas({
   color,
   width,
   touchWriting,
+  lockTouchScroll = false,
   scratchToErase = false,
   paper,
   zoom = 1,
@@ -42,6 +44,7 @@ export default function InkCanvas({
     eraserPoint = useRef<Point | null>(null),
     base = useRef(strokes),
     pointer = useRef<number | null>(null),
+    pointerType = useRef(""),
     scratchStart = useRef<number | null>(null),
     frame = useRef(0),
     working = useRef<Stroke[]>(strokes);
@@ -60,6 +63,41 @@ export default function InkCanvas({
     working.current = strokes;
     paint();
   }, [strokes]);
+  useLayoutEffect(() => {
+    const front = canvas.current;
+    const back = committedCanvas.current;
+    if (!front || !back) return;
+
+    const resize = () => {
+      const { width } = front.getBoundingClientRect();
+      if (!width) return;
+      const scale = Math.max(
+        1,
+        Math.min(2.5, (width * window.devicePixelRatio) / PAGE_W),
+      );
+      const pixelsWide = Math.round(PAGE_W * scale);
+      const pixelsHigh = Math.round(PAGE_H * scale);
+      if (front.width === pixelsWide && front.height === pixelsHigh) return;
+      for (const layer of [front, back]) {
+        layer.width = pixelsWide;
+        layer.height = pixelsHigh;
+      }
+      painted.current = null;
+      paint();
+    };
+
+    resize();
+    const observer =
+      typeof ResizeObserver !== "undefined"
+        ? new ResizeObserver(resize)
+        : undefined;
+    observer?.observe(front);
+    window.addEventListener("resize", resize);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", resize);
+    };
+  }, []);
   useEffect(
     () => () => {
       cancelAnimationFrame(frame.current);
@@ -116,7 +154,11 @@ export default function InkCanvas({
     }
     const last = stroke.points.at(-1)!;
     const minimum =
-      stroke.tool === "marker" && stroke.points.length === 1 ? 2 : 0.4;
+      stroke.tool === "marker" && stroke.points.length === 1
+        ? 2
+        : stroke.tool === "pen"
+          ? 0.12
+          : 0.4;
     if (Math.hypot(last.x - p.x, last.y - p.y) <= minimum) return;
     if (stroke.tool === "line") stroke.points = [stroke.points[0], p];
     else stroke.points.push(p);
@@ -124,14 +166,24 @@ export default function InkCanvas({
   const down = (e: PointerEvent<HTMLCanvasElement>) => {
     if (
       disabled ||
-      pointer.current !== null ||
       (e.pointerType === "touch" && !touchWriting) ||
       e.button > 0
     )
       return;
+    if (pointer.current !== null) {
+      if (e.pointerType !== "pen" || pointerType.current !== "touch") return;
+      const previous = pointer.current;
+      pointer.current = null;
+      if (e.currentTarget.hasPointerCapture(previous)) {
+        e.currentTarget.releasePointerCapture(previous);
+      }
+      live.current = null;
+      eraserPoint.current = null;
+    }
     e.preventDefault();
     e.currentTarget.setPointerCapture(e.pointerId);
     pointer.current = e.pointerId;
+    pointerType.current = e.pointerType;
     scratchStart.current =
       scratchToErase && e.pointerType === "pen" && tool === "pen"
         ? e.timeStamp
@@ -222,7 +274,8 @@ export default function InkCanvas({
         role="img"
         data-testid="ink-canvas"
         style={{
-          touchAction: touchWriting ? "none" : "pan-x pan-y pinch-zoom",
+          touchAction:
+            lockTouchScroll || touchWriting ? "none" : "pan-x pan-y pinch-zoom",
         }}
         onPointerDown={down}
         onPointerMove={move}

@@ -14,9 +14,7 @@ import {
   ArrowUpRight,
   Check,
   CheckCheck,
-  ChevronDown,
   ChevronLeft,
-  ChevronRight,
   Copy,
   Download,
   Eraser,
@@ -148,7 +146,7 @@ function Modal({
           {eyebrow && <span className="eyebrow">{eyebrow}</span>}
           <h2 id={titleId}>{title}</h2>
         </div>
-        <IconButton label="Schließen" onClick={onClose}>
+        <IconButton label="Schliessen" onClick={onClose}>
           <X size={20} />
         </IconButton>
       </div>
@@ -182,6 +180,7 @@ type Sheet =
   | "import"
   | "help"
   | "pageMenu"
+  | "deleteNotebook"
   | null;
 
 export default function App() {
@@ -203,6 +202,7 @@ export default function App() {
     [draft, setDraft] = useState(""),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
+    [notebookToDelete, setNotebookToDelete] = useState<string | null>(null),
     [newName, setNewName] = useState(""),
     [profileStep, setProfileStep] = useState(0),
     [sampleInk, setSampleInk] = useState<Stroke[]>([]),
@@ -588,6 +588,34 @@ export default function App() {
     setSidebar(false);
     setInLibrary(true);
   };
+  const notebookForDeletion = data?.notebooks.find(
+    (n) => n.id === notebookToDelete,
+  );
+  const deleteNotebook = () => {
+    if (!notebookForDeletion || externalEdit) return;
+    setData((d) => {
+      if (!d) return d;
+      const notebooks = d.notebooks.filter(
+        (n) => n.id !== notebookForDeletion.id,
+      );
+      if (d.activeNotebook !== notebookForDeletion.id)
+        return { ...d, notebooks };
+      const next = notebooks[0];
+      return {
+        ...d,
+        notebooks,
+        activeNotebook: next?.id ?? "",
+        activePage:
+          next?.pages.find((p) => p.id === next.lastPageId)?.id ??
+          next?.pages[0].id ??
+          "",
+      };
+    });
+    for (const p of notebookForDeletion.pages) history.current.delete(p.id);
+    setNotebookToDelete(null);
+    close();
+    notify("Lernheft auf diesem Gerät gelöscht.");
+  };
   const startProfile = () => {
     setProfileStep(0);
     setSampleInk([]);
@@ -729,7 +757,7 @@ export default function App() {
       return;
     const handoff = {
       subject: notebook.subject,
-      language: notebook.language,
+      language: page.language ?? notebook.language,
       samples: data.settings.includeProfile ? data.samples : [],
       sent: false,
     };
@@ -900,7 +928,7 @@ export default function App() {
         </p>
       </div>
     );
-  if (!data || !notebook || !page)
+  if (!data)
     return (
       <div className="loading">
         <LoaderCircle className="spin" size={24} />
@@ -909,13 +937,9 @@ export default function App() {
     );
   const currentChatUrl =
     data.settings.provider === "chatgpt"
-      ? notebook.chatUrl
-      : notebook.claudeUrl;
-  const canResume = Boolean(
-    notebook.lastPageId || page.task || page.strokes.length,
-  );
-  const pageIndex = notebook.pages.findIndex((p) => p.id === page.id),
-    h = history.current.get(page.id);
+      ? (notebook?.chatUrl ?? "")
+      : (notebook?.claudeUrl ?? "");
+  const h = page ? history.current.get(page.id) : undefined;
   void historyVersion;
   return (
     <>
@@ -926,11 +950,11 @@ export default function App() {
         hidden
         onChange={(e) => restore(e.target.files?.[0])}
       />
-      {inLibrary ? (
+      {inLibrary || !notebook || !page ? (
         <main className="library">
           <header className="library-top">
             <div className="library-brand">
-              <Logo /> Inkloop <small className="library-version">V9</small>
+              <Logo /> Inkloop <small className="library-version">V10</small>
             </div>
             <div className="topbar-actions">
               <IconButton label="Deine Handschrift" onClick={startProfile}>
@@ -967,25 +991,28 @@ export default function App() {
                 <Plus size={17} /> Neues Lernheft
               </button>
             </div>
-            {canResume && (
-              <button
-                className="resume-notebook"
-                onClick={() => openNotebook(notebook)}
-              >
-                <PenLine size={20} />
-                <span>
-                  <strong>Weiterschreiben</strong>
-                  <small>
-                    {notebook.name} / {page.title}
-                  </small>
-                </span>
-                <ArrowRight size={18} />
-              </button>
-            )}
+            {notebook &&
+              page &&
+              (notebook.lastPageId || page.task || page.strokes.length > 0) && (
+                <button
+                  className="resume-notebook"
+                  onClick={() => openNotebook(notebook)}
+                >
+                  <PenLine size={20} />
+                  <span>
+                    <strong>Weiterschreiben</strong>
+                    <small>
+                      {notebook.name} / {page.title}
+                    </small>
+                  </span>
+                  <ArrowRight size={18} />
+                </button>
+              )}
+            {!data.notebooks.length && <p className="muted">Keine Lernhefte</p>}
             <ul className="library-list" aria-label="Lernhefte">
               {data.notebooks.map((n) => {
                 const previewPage =
-                  n.id === notebook.id
+                  n.id === notebook?.id && page
                     ? page
                     : (n.pages.find((p) => p.id === n.lastPageId) ??
                       n.pages[0]);
@@ -1010,7 +1037,18 @@ export default function App() {
                           {n.pages.length === 1 ? "Seite" : "Seiten"}
                         </small>
                       </span>
-                      <ChevronRight className="library-arrow" size={17} />
+                    </button>
+                    <button
+                      className="icon-button notebook-options"
+                      aria-label={`Optionen für ${n.name}`}
+                      title="Lernheft löschen"
+                      disabled={externalEdit}
+                      onClick={() => {
+                        setNotebookToDelete(n.id);
+                        open("deleteNotebook");
+                      }}
+                    >
+                      <MoreHorizontal size={21} />
                     </button>
                   </li>
                 );
@@ -1087,6 +1125,94 @@ export default function App() {
                   {notebook.name}
                 </span>
               </div>
+              <div className="editor-tools">
+                <div
+                  className="ink-toolbar liquid-ui"
+                  ref={glassToolbar}
+                  role="toolbar"
+                  aria-label="Schreibwerkzeuge"
+                  inert={sidebar || externalEdit || (compact && panelOpen)}
+                >
+                  <div className="toolbar-group">
+                    <IconButton
+                      label="Stift"
+                      active={tool === "pen"}
+                      onClick={() => setTool("pen")}
+                    >
+                      <PenLine size={20} />
+                    </IconButton>
+                    <IconButton
+                      label="Textmarker"
+                      active={tool === "marker"}
+                      onClick={() => setTool("marker")}
+                    >
+                      <Highlighter size={20} />
+                    </IconButton>
+                    <IconButton
+                      label="Radierer"
+                      active={tool === "eraser"}
+                      onClick={() => setTool("eraser")}
+                    >
+                      <Eraser size={20} />
+                    </IconButton>
+                    <IconButton
+                      label="Gerade Linie"
+                      active={tool === "line"}
+                      onClick={() => setTool("line")}
+                    >
+                      <Minus size={20} />
+                    </IconButton>
+                  </div>
+                  <span className="toolbar-divider" />
+                  <div className="ink-colors" aria-label="Stiftfarbe">
+                    {palette.map((c) => (
+                      <button
+                        key={c}
+                        className={`color-button ${c === color ? "selected" : ""}`}
+                        style={{ "--ink": c } as React.CSSProperties}
+                        aria-label={`Farbe ${c}`}
+                        aria-pressed={c === color}
+                        onClick={() => {
+                          setColor(c);
+                          if (tool === "eraser") setTool("pen");
+                        }}
+                      />
+                    ))}
+                  </div>
+                  <span className="toolbar-divider" />
+                  <button
+                    className="width-button"
+                    aria-label={`Strichbreite ${width}. Zum Wechseln tippen.`}
+                    onClick={() =>
+                      setWidth(width === 2.5 ? 4 : width === 4 ? 1.5 : 2.5)
+                    }
+                  >
+                    <span style={{ height: width * 1.5, width: width * 1.5 }} />
+                  </button>
+                  <span className="toolbar-divider" />
+                  <IconButton
+                    label="Rückgängig"
+                    disabled={!h?.past.length}
+                    onClick={() => undo()}
+                  >
+                    <Undo2 size={18} />
+                  </IconButton>
+                  <IconButton
+                    label="Wiederholen"
+                    disabled={!h?.future.length}
+                    onClick={() => undo(true)}
+                  >
+                    <Redo2 size={18} />
+                  </IconButton>
+                </div>
+                <IconButton
+                  label="Seitenoptionen"
+                  onClick={() => open("pageMenu")}
+                  disabled={externalEdit || sidebar || (compact && panelOpen)}
+                >
+                  <MoreHorizontal size={22} />
+                </IconButton>
+              </div>
               <div className="topbar-actions liquid-ui" ref={glassActions}>
                 <span
                   role="status"
@@ -1159,120 +1285,7 @@ export default function App() {
                 aria-label="Lernheft"
                 inert={sidebar || (compact && panelOpen)}
               >
-                <div className="page-heading">
-                  <div>
-                    <input
-                      className="page-title"
-                      value={page.title}
-                      maxLength={150}
-                      aria-label="Seitentitel"
-                      onChange={(e) => patchPage({ title: e.target.value })}
-                    />
-                    <div className="page-subtitle">
-                      <span>
-                        {pageIndex + 1} von {notebook.pages.length}
-                      </span>
-                      <button
-                        onClick={() =>
-                          patchNotebook({
-                            language: notebook.language === "de" ? "en" : "de",
-                          })
-                        }
-                        title="Sprache des KI-Feedbacks wechseln"
-                      >
-                        {notebook.language === "de" ? "Deutsch" : "English"}{" "}
-                        <ChevronDown size={12} />
-                      </button>
-                    </div>
-                  </div>
-                  <IconButton
-                    label="Seitenoptionen"
-                    onClick={() => open("pageMenu")}
-                  >
-                    <MoreHorizontal size={23} />
-                  </IconButton>
-                </div>
                 <div className="canvas-shell">
-                  <div
-                    className="ink-toolbar liquid-ui"
-                    ref={glassToolbar}
-                    role="toolbar"
-                    aria-label="Schreibwerkzeuge"
-                  >
-                    <div className="toolbar-group">
-                      <IconButton
-                        label="Stift"
-                        active={tool === "pen"}
-                        onClick={() => setTool("pen")}
-                      >
-                        <PenLine size={20} />
-                      </IconButton>
-                      <IconButton
-                        label="Textmarker"
-                        active={tool === "marker"}
-                        onClick={() => setTool("marker")}
-                      >
-                        <Highlighter size={20} />
-                      </IconButton>
-                      <IconButton
-                        label="Radierer"
-                        active={tool === "eraser"}
-                        onClick={() => setTool("eraser")}
-                      >
-                        <Eraser size={20} />
-                      </IconButton>
-                      <IconButton
-                        label="Gerade Linie"
-                        active={tool === "line"}
-                        onClick={() => setTool("line")}
-                      >
-                        <Minus size={20} />
-                      </IconButton>
-                    </div>
-                    <span className="toolbar-divider" />
-                    <div className="ink-colors" aria-label="Stiftfarbe">
-                      {palette.map((c) => (
-                        <button
-                          key={c}
-                          className={`color-button ${c === color ? "selected" : ""}`}
-                          style={{ "--ink": c } as React.CSSProperties}
-                          aria-label={`Farbe ${c}`}
-                          aria-pressed={c === color}
-                          onClick={() => {
-                            setColor(c);
-                            if (tool === "eraser") setTool("pen");
-                          }}
-                        />
-                      ))}
-                    </div>
-                    <span className="toolbar-divider" />
-                    <button
-                      className="width-button"
-                      aria-label={`Strichbreite ${width}. Zum Wechseln tippen.`}
-                      onClick={() =>
-                        setWidth(width === 2.5 ? 4 : width === 4 ? 1.5 : 2.5)
-                      }
-                    >
-                      <span
-                        style={{ height: width * 1.5, width: width * 1.5 }}
-                      />
-                    </button>
-                    <span className="toolbar-divider" />
-                    <IconButton
-                      label="Rückgängig"
-                      disabled={!h?.past.length}
-                      onClick={() => undo()}
-                    >
-                      <Undo2 size={18} />
-                    </IconButton>
-                    <IconButton
-                      label="Wiederholen"
-                      disabled={!h?.future.length}
-                      onClick={() => undo(true)}
-                    >
-                      <Redo2 size={18} />
-                    </IconButton>
-                  </div>
                   <div className="paper-scroll" key={page.id}>
                     <div className="paper-holder">
                       <InkCanvas
@@ -1288,63 +1301,6 @@ export default function App() {
                         zoom={zoom}
                       />
                     </div>
-                  </div>
-                  <div className="canvas-footer">
-                    <div className="paper-controls">
-                      <IconButton
-                        label="Verkleinern"
-                        disabled={zoom <= 1}
-                        onClick={() => setZoom((z) => Math.max(1, z - 0.25))}
-                      >
-                        <ZoomOut size={15} />
-                      </IconButton>
-                      <span>{Math.round(zoom * 100)} %</span>
-                      <IconButton
-                        label="Vergrößern"
-                        disabled={zoom >= 2}
-                        onClick={() => setZoom((z) => Math.min(2, z + 0.25))}
-                      >
-                        <ZoomIn size={15} />
-                      </IconButton>
-                      <span className="tiny-divider" />
-                      <select
-                        aria-label="Papierart"
-                        value={page.paper}
-                        onChange={(e) =>
-                          patchPage({ paper: e.target.value as Page["paper"] })
-                        }
-                      >
-                        <option value="grid">Kariert</option>
-                        <option value="ruled">Liniert</option>
-                        <option value="dots">Punkte</option>
-                        <option value="blank">Blanko</option>
-                      </select>
-                    </div>
-                  </div>
-                </div>
-                <div className="writing-bottom">
-                  <div>
-                    <IconButton
-                      label="Vorherige Seite"
-                      disabled={pageIndex === 0}
-                      onClick={() =>
-                        navigatePage(notebook.pages[pageIndex - 1].id)
-                      }
-                    >
-                      <ChevronLeft size={17} />
-                    </IconButton>
-                    <span>
-                      {pageIndex + 1} / {notebook.pages.length}
-                    </span>
-                    <IconButton
-                      label="Nächste Seite"
-                      disabled={pageIndex === notebook.pages.length - 1}
-                      onClick={() =>
-                        navigatePage(notebook.pages[pageIndex + 1].id)
-                      }
-                    >
-                      <ChevronRight size={17} />
-                    </IconButton>
                   </div>
                 </div>
               </section>
@@ -1576,7 +1532,8 @@ export default function App() {
                                       submission,
                                       submission.handoff ?? {
                                         subject: notebook.subject,
-                                        language: notebook.language,
+                                        language:
+                                          page.language ?? notebook.language,
                                         samples: [],
                                         sent: false,
                                       },
@@ -1661,6 +1618,7 @@ export default function App() {
               color={palette[0]}
               width={2.5}
               touchWriting={profileFinger}
+              lockTouchScroll
               paper="ruled"
               label="Handschriftprobe"
             />
@@ -1752,6 +1710,26 @@ export default function App() {
               <Plus size={17} /> Lernheft erstellen
             </button>
           </form>
+        </Modal>
+      )}
+      {sheet === "deleteNotebook" && notebookForDeletion && (
+        <Modal title="Lernheft löschen?" onClose={close}>
+          <p>
+            «{notebookForDeletion.name}» und alle seine Seiten werden auf diesem
+            Gerät gelöscht. Bereits geteilte Abgaben bleiben auf dem Server.
+          </p>
+          <div className="button-row">
+            <button className="secondary" autoFocus onClick={close}>
+              Abbrechen
+            </button>
+            <button
+              className="danger-button"
+              disabled={externalEdit}
+              onClick={deleteNotebook}
+            >
+              Lernheft löschen
+            </button>
+          </div>
         </Modal>
       )}
       {sheet === "task" && (
@@ -2035,22 +2013,24 @@ export default function App() {
                   />
                 </label>
               </div>
-              <div className="settings-section">
-                <h3>Chat für {notebook.name}</h3>
-                <ChatForm
-                  key={data.settings.provider}
-                  initial={currentChatUrl}
-                  provider={data.settings.provider}
-                  onSave={(url) => {
-                    patchNotebook(
-                      data.settings.provider === "chatgpt"
-                        ? { chatUrl: url }
-                        : { claudeUrl: url },
-                    );
-                    notify("Chat-Link gespeichert.");
-                  }}
-                />
-              </div>
+              {notebook && (
+                <div className="settings-section">
+                  <h3>Chat für {notebook.name}</h3>
+                  <ChatForm
+                    key={data.settings.provider}
+                    initial={currentChatUrl}
+                    provider={data.settings.provider}
+                    onSave={(url) => {
+                      patchNotebook(
+                        data.settings.provider === "chatgpt"
+                          ? { chatUrl: url }
+                          : { claudeUrl: url },
+                      );
+                      notify("Chat-Link gespeichert.");
+                    }}
+                  />
+                </div>
+              )}
               <div className="settings-section">
                 <h3>ChatGPT-Plugin</h3>
                 <p className="muted">
@@ -2105,8 +2085,63 @@ export default function App() {
           )}
         </Modal>
       )}
-      {sheet === "pageMenu" && (
+      {sheet === "pageMenu" && notebook && page && (
         <Modal title="Seitenoptionen" onClose={close}>
+          <label className="field-label">
+            Seitentitel
+            <input
+              className="text-input page-title"
+              value={page.title}
+              maxLength={150}
+              aria-label="Seitentitel"
+              onChange={(e) => patchPage({ title: e.target.value })}
+            />
+          </label>
+          <div className="page-settings">
+            <label>
+              Sprache
+              <select
+                aria-label="Seitensprache"
+                value={page.language ?? notebook.language}
+                onChange={(e) =>
+                  patchPage({ language: e.target.value as Page["language"] })
+                }
+              >
+                <option value="de">Deutsch</option>
+                <option value="en">English</option>
+              </select>
+            </label>
+            <div className="paper-controls">
+              <IconButton
+                label="Verkleinern"
+                disabled={zoom <= 1}
+                onClick={() => setZoom((z) => Math.max(1, z - 0.25))}
+              >
+                <ZoomOut size={15} />
+              </IconButton>
+              <span>{Math.round(zoom * 100)} %</span>
+              <IconButton
+                label="Vergrößern"
+                disabled={zoom >= 2}
+                onClick={() => setZoom((z) => Math.min(2, z + 0.25))}
+              >
+                <ZoomIn size={15} />
+              </IconButton>
+              <span className="tiny-divider" />
+              <select
+                aria-label="Papierart"
+                value={page.paper}
+                onChange={(e) =>
+                  patchPage({ paper: e.target.value as Page["paper"] })
+                }
+              >
+                <option value="grid">Kariert</option>
+                <option value="ruled">Liniert</option>
+                <option value="dots">Punkte</option>
+                <option value="blank">Blanko</option>
+              </select>
+            </div>
+          </div>
           <button
             className="menu-action"
             onClick={() => {

@@ -400,8 +400,10 @@ async function api(request, env) {
       new TextDecoder().decode(await limitedBody(request, 500000)),
     );
     if (
-      !validId(value.activeNotebook) ||
       !Array.isArray(value.notebooks) ||
+      (value.notebooks.length
+        ? !validId(value.activeNotebook)
+        : value.activeNotebook !== "" || value.activePage !== "") ||
       value.notebooks.length > 200 ||
       !value.notebooks.every(
         (n) =>

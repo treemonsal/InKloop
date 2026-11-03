@@ -129,6 +129,7 @@ export function renderInk(
 ) {
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
+  ctx.setTransform(canvas.width / PAGE_W, 0, 0, canvas.height / PAGE_H, 0, 0);
   ctx.clearRect(0, 0, PAGE_W, PAGE_H);
   for (const s of strokes) drawStroke(ctx, s);
   if (live) drawStroke(ctx, live);
