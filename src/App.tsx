@@ -24,7 +24,6 @@ import {
   ExternalLink,
   FileText,
   Fingerprint,
-  Library,
   PanelLeft,
   HelpCircle,
   Highlighter,
@@ -905,6 +904,9 @@ export default function App() {
     data.settings.provider === "chatgpt"
       ? notebook.chatUrl
       : notebook.claudeUrl;
+  const canResume = Boolean(
+    notebook.lastPageId || page.task || page.strokes.length,
+  );
   const pageIndex = notebook.pages.findIndex((p) => p.id === page.id),
     h = history.current.get(page.id);
   void historyVersion;
@@ -921,7 +923,7 @@ export default function App() {
         <main className="library">
           <header className="library-top">
             <div className="library-brand">
-              <Logo /> Inkloop
+              <Logo /> Inkloop <small className="library-version">V6</small>
             </div>
             <div className="topbar-actions">
               <IconButton label="Deine Handschrift" onClick={startProfile}>
@@ -958,28 +960,57 @@ export default function App() {
                 <Plus size={17} /> Neues Lernheft
               </button>
             </div>
+            {canResume && (
+              <button
+                className="resume-notebook"
+                onClick={() => openNotebook(notebook)}
+              >
+                <PenLine size={20} />
+                <span>
+                  <strong>Weiterschreiben</strong>
+                  <small>
+                    {notebook.name} / {page.title}
+                  </small>
+                </span>
+                <ArrowRight size={18} />
+              </button>
+            )}
             <ul className="library-list" aria-label="Lernhefte">
-              {data.notebooks.map((n) => (
-                <li key={n.id}>
-                  <button
-                    className="library-notebook"
-                    aria-label={n.name}
-                    onClick={() => openNotebook(n)}
-                  >
-                    <span className="library-book">
-                      <BookOpen size={23} strokeWidth={1.6} />
-                    </span>
-                    <span className="library-name">
-                      <span>{n.name}</span>
-                      <small>
-                        {n.pages.length}{" "}
-                        {n.pages.length === 1 ? "Seite" : "Seiten"}
-                      </small>
-                    </span>
-                    <ChevronRight className="library-arrow" size={18} />
-                  </button>
-                </li>
-              ))}
+              {data.notebooks.map((n) => {
+                const previewPage =
+                  n.id === notebook.id
+                    ? page
+                    : (n.pages.find((p) => p.id === n.lastPageId) ??
+                      n.pages[0]);
+                return (
+                  <li key={n.id}>
+                    <button
+                      className="library-notebook"
+                      aria-label={n.name}
+                      onClick={() => openNotebook(n)}
+                    >
+                      <span className="notebook-cover" aria-hidden="true">
+                        <span className="cover-icon">
+                          <BookOpen size={19} strokeWidth={1.7} />
+                        </span>
+                        <span
+                          className={`cover-paper paper-${previewPage.paper}`}
+                        >
+                          <Miniature strokes={previewPage.strokes} />
+                        </span>
+                      </span>
+                      <span className="library-name">
+                        <span>{n.name}</span>
+                        <small>
+                          {n.pages.length}{" "}
+                          {n.pages.length === 1 ? "Seite" : "Seiten"}
+                        </small>
+                      </span>
+                      <ChevronRight className="library-arrow" size={17} />
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           </div>
         </main>
@@ -1033,11 +1064,12 @@ export default function App() {
             <header className="topbar">
               <div className="editor-navigation">
                 <button
-                  className="icon-button"
+                  className="icon-button library-back"
                   aria-label="Alle Lernhefte"
                   onClick={openLibrary}
                 >
-                  <Library size={20} />
+                  <ChevronLeft size={20} />
+                  <span>Lernhefte</span>
                 </button>
                 <button
                   className="icon-button"
@@ -1133,6 +1165,9 @@ export default function App() {
                       onChange={(e) => patchPage({ title: e.target.value })}
                     />
                     <div className="page-subtitle">
+                      <span>
+                        {pageIndex + 1} von {notebook.pages.length}
+                      </span>
                       <button
                         onClick={() =>
                           patchNotebook({
