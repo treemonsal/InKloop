@@ -25,17 +25,17 @@ export function useLiquidChrome(
       // Refraction is reserved for the palette that actually sits over paper.
       const palette = createLiquidGlass(bar, {
         radius: 20,
-        refraction: 19,
-        blur: 15,
-        light: 12,
+        refraction: 22,
+        blur: 7,
+        light: 10,
         pointer: false,
         resolution: 0.5,
       });
       const navigation = createLiquidGlass(controls, {
         mode: "css",
         radius: 17,
-        blur: 12,
-        light: 7,
+        blur: 8,
+        light: 6,
         pointer: false,
       });
       dispose = () => {

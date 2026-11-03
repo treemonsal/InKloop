@@ -13,7 +13,7 @@
   --border: #ffffff0f;
   --muted: #ababb2;
   --text: #f3f3f5;
-  --accent: #a7c4ff;
+  --accent: #518dff;
   --green: #ababb2;
   --sidebar: 238px;
 }
@@ -173,7 +173,7 @@ small,
   color: #242424;
 }
 .primary:hover:not(:disabled) {
-  background: #bad1ff;
+  background: #679cff;
 }
 .secondary {
   background: #ffffff05;
@@ -590,7 +590,7 @@ small,
   left: 0;
   right: 0;
   height: 2px;
-  background: #a7c4ff;
+  background: #518dff;
   content: "";
   border-radius: 2px;
 }
@@ -1629,8 +1629,8 @@ input[type="checkbox"] {
 }
 .plugin-handoff {
   padding: 18px;
-  border: 1px solid #a7c4ff30;
-  background: #a7c4ff08;
+  border: 1px solid #518dff30;
+  background: #518dff08;
   border-radius: 11px;
   margin-bottom: 24px;
 }
@@ -1826,14 +1826,14 @@ input[type="checkbox"] {
   width: 100%;
   padding: 0.88rem 1rem;
   margin: 0 0 1rem;
-  background: #a7c4ff12;
+  background: #518dff12;
   color: var(--accent);
-  border: 1px solid #a7c4ff36;
+  border: 1px solid #518dff36;
   border-radius: 0.9rem;
   text-align: left;
 }
 .resume-notebook:hover {
-  background: #a7c4ff23;
+  background: #518dff23;
 }
 .resume-notebook span {
   display: grid;
@@ -1891,9 +1891,9 @@ input[type="checkbox"] {
   white-space: nowrap;
 }
 .panel-toggle[aria-expanded="true"] {
-  background: #a7c4ff16;
+  background: #518dff16;
   color: var(--accent);
-  border-color: #a7c4ff45;
+  border-color: #518dff45;
 }
 .save-state {
   color: var(--muted);
@@ -1958,7 +1958,8 @@ input[type="checkbox"] {
 }
 .ink-toolbar .icon-button.active {
   color: var(--accent);
-  background: #a7c4ff19;
+  background: transparent;
+  box-shadow: none;
 }
 .toolbar-group,
 .ink-colors {
@@ -2080,7 +2081,7 @@ input[type="checkbox"] {
 }
 .page-link.selected {
   color: var(--accent);
-  background: #a7c4ff14;
+  background: #518dff14;
 }
 .page-link-label {
   font-size: 1rem;
@@ -2251,7 +2252,7 @@ input[type="checkbox"] {
   color: var(--muted);
 }
 .writing-area .canvas-shell {
-  --tool-rail: 4.3rem;
+  --tool-rail: 3.25rem;
 }
 .writing-area .ink-toolbar {
   position: absolute;
@@ -2263,7 +2264,7 @@ input[type="checkbox"] {
   border: 1px solid #ffffff24;
   z-index: 2;
   background: #242427eb;
-  box-shadow: 0 0.35rem 1rem #0008;
+  box-shadow: 0 0.2rem 0.6rem #0005;
   padding-inline: 0.65rem;
 }
 .writing-area .paper-holder {
@@ -2283,7 +2284,7 @@ input[type="checkbox"] {
 }
 @media (pointer: coarse) {
   .writing-area .canvas-shell {
-    --tool-rail: 4.8rem;
+    --tool-rail: 3.6rem;
   }
 }
 @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
@@ -2308,14 +2309,14 @@ textarea {
   gap: 0.3rem;
   border-radius: 17px;
   border: 1px solid #ffffff26;
-  background: #1d1e21;
-  --lg-tint: rgb(23 24 27 / 0.78);
+  background: rgb(23 24 27 / 0.32);
+  --lg-tint: rgb(23 24 27 / 0.32);
 }
 .writing-area .ink-toolbar.liquid-ui {
   border-radius: 20px;
   border-color: #ffffff32;
-  background: #232426;
-  --lg-tint: rgb(27 28 31 / 0.72);
+  background: rgb(24 25 28 / 0.3);
+  --lg-tint: rgb(24 25 28 / 0.3);
 }
 .topbar .topbar-actions.liquid-ui.lg-host,
 .writing-area .ink-toolbar.liquid-ui.lg-host {
@@ -2326,7 +2327,9 @@ textarea {
   --lg-solid: #232426;
 }
 .liquid-ui > .lg-layer {
-  box-shadow: none;
+  box-shadow:
+    inset 0 1px 0 #ffffff17,
+    inset 0 -1px 0 #ffffff0a;
 }
 .topbar .liquid-ui .save-state {
   padding-inline-start: 0.4rem;

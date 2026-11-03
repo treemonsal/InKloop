@@ -1,5 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, type PointerEvent } from "react";
-import { eraseAlong, uid, type Point, type Stroke, type Paper } from "./model";
+import {
+  eraseAlong,
+  eraseScratch,
+  uid,
+  type Point,
+  type Stroke,
+  type Paper,
+} from "./model";
 import { PAGE_H, PAGE_W, drawStroke, renderInk } from "./ink";
 export type Tool = "pen" | "marker" | "eraser" | "line";
 type Props = {
@@ -9,6 +16,7 @@ type Props = {
   color: string;
   width: number;
   touchWriting: boolean;
+  scratchToErase?: boolean;
   paper: Paper;
   zoom?: number;
   label?: string;
@@ -21,6 +29,7 @@ export default function InkCanvas({
   color,
   width,
   touchWriting,
+  scratchToErase = false,
   paper,
   zoom = 1,
   label = "Schreibfläche",
@@ -33,6 +42,7 @@ export default function InkCanvas({
     eraserPoint = useRef<Point | null>(null),
     base = useRef(strokes),
     pointer = useRef<number | null>(null),
+    scratchStart = useRef<number | null>(null),
     frame = useRef(0),
     working = useRef<Stroke[]>(strokes);
   const change = useRef(onChange);
@@ -122,6 +132,10 @@ export default function InkCanvas({
     e.preventDefault();
     e.currentTarget.setPointerCapture(e.pointerId);
     pointer.current = e.pointerId;
+    scratchStart.current =
+      scratchToErase && e.pointerType === "pen" && tool === "pen"
+        ? e.timeStamp
+        : null;
     working.current = base.current;
     const p = point(e, e.currentTarget.getBoundingClientRect());
     if (tool === "eraser") erase(p);
@@ -156,8 +170,19 @@ export default function InkCanvas({
       );
     }
     const draft = live.current;
+    const before = working.current;
+    if (draft && scratchStart.current !== null && e.type === "pointerup") {
+      working.current = eraseScratch(
+        before,
+        draft.points,
+        e.timeStamp - scratchStart.current,
+      );
+    }
     const stroke =
-      draft?.tool === "marker" && draft.points.length < 2 ? null : draft;
+      before !== working.current ||
+      (draft?.tool === "marker" && draft.points.length < 2)
+        ? null
+        : draft;
     const result = stroke ? [...working.current, stroke] : working.current;
     const changed = result !== base.current;
     const committed = committedCanvas.current?.getContext("2d");
@@ -166,6 +191,7 @@ export default function InkCanvas({
       painted.current = result;
     }
     pointer.current = null;
+    scratchStart.current = null;
     live.current = null;
     eraserPoint.current = null;
     base.current = result;

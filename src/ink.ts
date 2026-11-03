@@ -12,6 +12,7 @@ const colorMap: Record<string, string> = {
   "#f4f5f7": "#222329",
   "#a9abb2": "#5c6069",
   "#a7c4ff": "#30518f",
+  "#3976e8": "#2458ac",
   "#eee9df": "#242622",
   "#bfcaaf": "#4b633c",
   "#dfb18a": "#965724",

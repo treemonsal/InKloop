@@ -336,6 +336,51 @@ export function eraseAlong(
   return changed ? remaining : strokes;
 }
 
+export function eraseScratch(
+  strokes: Stroke[],
+  points: Point[],
+  duration: number,
+) {
+  if (!strokes.length || points.length < 5 || duration > 1100) return strokes;
+
+  let left = Infinity,
+    right = -Infinity,
+    top = Infinity,
+    bottom = -Infinity;
+  for (const { x, y } of points) {
+    left = Math.min(left, x);
+    right = Math.max(right, x);
+    top = Math.min(top, y);
+    bottom = Math.max(bottom, y);
+  }
+  const width = right - left;
+  const height = bottom - top;
+  if (width < 28 || width > 420 || height > Math.min(48, width * 0.55))
+    return strokes;
+
+  // Count full trips across the scratch, ignoring small turns in the middle.
+  let side = 0;
+  let passes = 0;
+  for (const { x } of points) {
+    const edge =
+      x <= left + width * 0.22 ? -1 : x >= right - width * 0.22 ? 1 : 0;
+    if (edge && edge !== side) {
+      if (side) passes++;
+      side = edge;
+    }
+  }
+  if (passes < 4) return strokes;
+
+  const y = (top + bottom) / 2;
+  const radius = Math.min(width / 2, height / 2 + 7);
+  return eraseAlong(
+    strokes,
+    { x: left + radius, y, p: 0.5 },
+    { x: right - radius, y, p: 0.5 },
+    radius,
+  );
+}
+
 export function eraseAt(
   strokes: Stroke[],
   point: Point,

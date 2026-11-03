@@ -163,7 +163,7 @@ function Miniature({ strokes }: { strokes: Stroke[] }) {
   }, [strokes]);
   return <canvas ref={ref} aria-hidden="true" />;
 }
-const palette = ["#f4f5f7", "#a9abb2", "#a7c4ff"];
+const palette = ["#f4f5f7", "#a9abb2", "#3976e8"];
 const compactLayout =
   "(max-width: 720px), (orientation: portrait) and (max-width: 1180px)";
 const prefersCompactLayout = () => window.matchMedia(compactLayout).matches;
@@ -930,7 +930,7 @@ export default function App() {
         <main className="library">
           <header className="library-top">
             <div className="library-brand">
-              <Logo /> Inkloop <small className="library-version">V8</small>
+              <Logo /> Inkloop <small className="library-version">V9</small>
             </div>
             <div className="topbar-actions">
               <IconButton label="Deine Handschrift" onClick={startProfile}>
@@ -1283,6 +1283,7 @@ export default function App() {
                         color={color}
                         width={width}
                         touchWriting={data.settings.touchWriting}
+                        scratchToErase
                         paper={page.paper}
                         zoom={zoom}
                       />

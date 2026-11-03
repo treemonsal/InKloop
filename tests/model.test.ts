@@ -8,6 +8,7 @@ import {
   chatLink,
   eraseAt,
   eraseAlong,
+  eraseScratch,
   strokePath,
   buildPrompt,
   uid,
@@ -183,5 +184,36 @@ test("two received tasks preserve a written assignment and the open page", () =>
   assert.equal(
     receiveTask(second, n.id, "event-two", "Zweite Aufgabe"),
     second,
+  );
+});
+
+test("a quick, repeated scratch only removes the crossed ink", () => {
+  const p = (x: number, y: number) => ({ x, y, p: 0.5 });
+  const crossed = { ...stroke, points: [p(10, 50), p(210, 50)] };
+  const adjacent = { ...stroke, id: uid(), points: [p(10, 78), p(210, 78)] };
+  const original = [crossed, adjacent];
+  const scratch = [p(55, 44), p(150, 47), p(58, 50), p(145, 53), p(61, 56)];
+  const result = eraseScratch(original, scratch, 350);
+  assert.equal(result.length, 3);
+  assert.equal(result[0].points[0].x, 10);
+  assert.equal(result[1].points.at(-1)?.x, 210);
+  assert.equal(result[2], adjacent);
+  assert.equal(eraseScratch(original, scratch, 1700), original);
+  assert.equal(eraseScratch(original, scratch.slice(0, 4), 350), original);
+  assert.equal(
+    eraseScratch(
+      original,
+      scratch.map(({ x, y }) => p(x, y - 40)),
+      350,
+    ),
+    original,
+  );
+  assert.equal(
+    eraseScratch(
+      original,
+      [p(55, 41), p(65, 55), p(62, 42), p(75, 55), p(71, 42), p(85, 55)],
+      300,
+    ),
+    original,
   );
 });

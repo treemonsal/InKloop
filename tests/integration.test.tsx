@@ -221,6 +221,26 @@ test("complete notebook flow: draw, undo/redo, persist, submit snapshot, import 
     await delay(400);
   });
   assert.equal((await loadData())!.notebooks[0].pages[0].strokes.length, 1);
+  await act(async () => {
+    send("pointerdown", 105, 151);
+    send("pointermove", 165, 153);
+    send("pointermove", 107, 156);
+    send("pointermove", 164, 160);
+    send("pointerup", 109, 162);
+    await delay(400);
+  });
+  const erased = (await loadData())!.notebooks[0].pages[0].strokes;
+  assert.equal(erased.length, 2);
+  assert.equal(erased[0].points[0].x, 80);
+  assert.equal(erased[1].points.at(-1)?.x, 190);
+  await click("Rückgängig");
+  await act(async () => {
+    await delay(400);
+  });
+  assert.deepEqual(
+    (await loadData())!.notebooks[0].pages[0].strokes,
+    stored.notebooks[0].pages[0].strokes,
+  );
   await click("Antwort abgeben");
   await act(async () => {
     await delay(400);
