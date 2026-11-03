@@ -232,6 +232,18 @@ export default function App() {
     channel = useRef<BroadcastChannel | null>(null);
   const importFile = useRef<HTMLInputElement>(null);
   const restoreCandidate = useRef<AppData | null>(null);
+  const panelToggle = useRef<HTMLButtonElement>(null);
+  const learningPanel = useRef<HTMLElement>(null);
+  const closeLearningPanel = () => {
+    setPanelOpen(false);
+    panelToggle.current?.focus();
+  };
+  useEffect(() => {
+    if (compact && panelOpen && !inLibrary)
+      learningPanel.current
+        ?.querySelector<HTMLElement>('[aria-selected="true"]')
+        ?.focus();
+  }, [compact, panelOpen, inLibrary]);
   const notify = useCallback((message: string) => {
     setToast(message);
     clearTimeout(toastTimer.current);
@@ -520,7 +532,7 @@ export default function App() {
     const handler = (e: KeyboardEvent) => {
       if (e.key === "Escape" && !sheet) {
         if (sidebar) setSidebar(false);
-        else if (compact && panelOpen) setPanelOpen(false);
+        else if (compact && panelOpen) closeLearningPanel();
       }
       if (
         (e.metaKey || e.ctrlKey) &&
@@ -1064,7 +1076,11 @@ export default function App() {
                   className="panel-toggle secondary"
                   aria-label="Lernbereich"
                   aria-expanded={panelOpen}
-                  onClick={() => setPanelOpen(!panelOpen)}
+                  aria-controls="learning-panel"
+                  ref={panelToggle}
+                  onClick={() =>
+                    panelOpen ? closeLearningPanel() : setPanelOpen(true)
+                  }
                 >
                   <FileText size={17} />
                   <span>Lernbereich</span>
@@ -1291,19 +1307,25 @@ export default function App() {
                   </div>
                 </div>
               </section>
-              {panelOpen && (
+              {(compact || panelOpen) && (
                 <>
                   {compact && (
                     <button
                       className="panel-scrim"
                       aria-label="Lernbereich schliessen"
-                      onClick={() => setPanelOpen(false)}
+                      disabled={!panelOpen}
+                      aria-hidden={!panelOpen}
+                      tabIndex={-1}
+                      onClick={closeLearningPanel}
                     />
                   )}
                   <aside
+                    id="learning-panel"
+                    ref={learningPanel}
                     className="learning-panel"
                     aria-label="Lernbereich"
-                    inert={sidebar}
+                    aria-hidden={!panelOpen}
+                    inert={sidebar || !panelOpen}
                   >
                     <div
                       className="panel-tabs"

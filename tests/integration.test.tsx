@@ -194,11 +194,12 @@ test("complete notebook flow: draw, undo/redo, persist, submit snapshot, import 
     send("pointerdown", 80, 150);
     send("pointermove", 130, 170);
     send("pointermove", 160, 150);
-    send("pointerup", 160, 150);
+    send("pointerup", 190, 145);
     await delay(450);
   });
   let stored = (await loadData())!;
   assert.equal(stored.notebooks[0].pages[0].strokes.length, 1);
+  assert.equal(stored.notebooks[0].pages[0].strokes[0].points.at(-1)?.x, 190);
   assert.equal(stored.notebooks[0].pages[0].task, "Solve x² = 9.");
   await click("Rückgängig");
   await act(async () => {

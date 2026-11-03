@@ -1,6 +1,6 @@
-import { useEffect, useRef, type PointerEvent } from "react";
+import { useEffect, useLayoutEffect, useRef, type PointerEvent } from "react";
 import { eraseAt, uid, type Point, type Stroke, type Paper } from "./model";
-import { PAGE_H, PAGE_W, renderInk } from "./ink";
+import { PAGE_H, PAGE_W, drawStroke, renderInk } from "./ink";
 export type Tool = "pen" | "marker" | "eraser" | "line";
 type Props = {
   strokes: Stroke[];
@@ -27,6 +27,8 @@ export default function InkCanvas({
   disabled = false,
 }: Props) {
   const canvas = useRef<HTMLCanvasElement>(null),
+    committedCanvas = useRef<HTMLCanvasElement>(null),
+    painted = useRef<Stroke[] | null>(null),
     live = useRef<Stroke | null>(null),
     base = useRef(strokes),
     pointer = useRef<number | null>(null),
@@ -34,20 +36,28 @@ export default function InkCanvas({
     working = useRef<Stroke[]>(strokes);
   const change = useRef(onChange);
   change.current = onChange;
-  useEffect(() => {
+  const paint = () => {
+    if (committedCanvas.current && painted.current !== working.current) {
+      renderInk(committedCanvas.current, working.current);
+      painted.current = working.current;
+    }
+    if (canvas.current)
+      renderInk(canvas.current, [], live.current || undefined);
+  };
+  useLayoutEffect(() => {
     base.current = strokes;
     working.current = strokes;
-    if (canvas.current)
-      renderInk(canvas.current, strokes, live.current || undefined);
+    paint();
   }, [strokes]);
   useEffect(
     () => () => {
       cancelAnimationFrame(frame.current);
+      frame.current = 0;
       if (pointer.current !== null) {
         const result = live.current
           ? [...working.current, live.current]
           : working.current;
-        change.current(result);
+        if (live.current || result !== base.current) change.current(result);
       }
     },
     [],
@@ -56,16 +66,14 @@ export default function InkCanvas({
     if (frame.current) return;
     frame.current = requestAnimationFrame(() => {
       frame.current = 0;
-      if (canvas.current)
-        renderInk(canvas.current, working.current, live.current || undefined);
+      paint();
     });
   };
-  const point = (e: {
-    clientX: number;
-    clientY: number;
-    pressure: number;
-  }): Point => {
-    const rect = canvas.current!.getBoundingClientRect();
+  const point = (
+    e: { clientX: number; clientY: number; pressure: number },
+    rect: DOMRect,
+    fallbackPressure = 0.5,
+  ): Point => {
     return {
       x: Math.max(
         0,
@@ -75,8 +83,24 @@ export default function InkCanvas({
         0,
         Math.min(PAGE_H, ((e.clientY - rect.top) / rect.height) * PAGE_H),
       ),
-      p: e.pressure > 0 ? Math.min(1, e.pressure) : 0.5,
+      p: e.pressure > 0 ? Math.min(1, e.pressure) : fallbackPressure,
     };
+  };
+  const erase = (p: Point) => {
+    const remaining = eraseAt(working.current, p, 15);
+    if (remaining.length !== working.current.length)
+      working.current = remaining;
+  };
+  const appendPoint = (p: Point) => {
+    const stroke = live.current;
+    if (!stroke) {
+      erase(p);
+      return;
+    }
+    const last = stroke.points.at(-1)!;
+    if (Math.hypot(last.x - p.x, last.y - p.y) <= 0.4) return;
+    if (stroke.tool === "line") stroke.points = [stroke.points[0], p];
+    else stroke.points.push(p);
   };
   const down = (e: PointerEvent<HTMLCanvasElement>) => {
     if (
@@ -90,8 +114,8 @@ export default function InkCanvas({
     e.currentTarget.setPointerCapture(e.pointerId);
     pointer.current = e.pointerId;
     working.current = base.current;
-    const p = point(e);
-    if (tool === "eraser") working.current = eraseAt(working.current, p, 15);
+    const p = point(e, e.currentTarget.getBoundingClientRect());
+    if (tool === "eraser") erase(p);
     else
       live.current = {
         id: uid(),
@@ -107,35 +131,37 @@ export default function InkCanvas({
     e.preventDefault();
     const coalesced = e.nativeEvent.getCoalescedEvents?.();
     const events = coalesced?.length ? coalesced : [e.nativeEvent];
-    for (const event of events) {
-      const p = point(event);
-      if (tool === "eraser") {
-        working.current = eraseAt(working.current, p, 15);
-      } else if (live.current) {
-        if (live.current.tool === "line")
-          live.current.points = [live.current.points[0], p];
-        else {
-          const last = live.current.points.at(-1)!;
-          if (Math.hypot(last.x - p.x, last.y - p.y) > 0.4)
-            live.current.points.push(p);
-        }
-      }
-    }
+    const rect = e.currentTarget.getBoundingClientRect();
+    for (const event of events) appendPoint(point(event, rect));
     redraw();
   };
   const finish = (e: PointerEvent<HTMLCanvasElement>) => {
     if (pointer.current !== e.pointerId) return;
-    const result = live.current
-      ? [...working.current, live.current]
-      : working.current;
+    const stroke = live.current;
+    if (e.type === "pointerup") {
+      appendPoint(
+        point(
+          e,
+          e.currentTarget.getBoundingClientRect(),
+          stroke?.points.at(-1)?.p,
+        ),
+      );
+    }
+    const result = stroke ? [...working.current, stroke] : working.current;
+    const changed = result !== base.current;
+    const committed = committedCanvas.current?.getContext("2d");
+    if (stroke && committed && painted.current === working.current) {
+      drawStroke(committed, stroke);
+      painted.current = result;
+    }
     pointer.current = null;
     live.current = null;
     base.current = result;
     working.current = result;
-    onChange(result);
+    paint();
+    if (changed) onChange(result);
     if (e.currentTarget.hasPointerCapture(e.pointerId))
       e.currentTarget.releasePointerCapture(e.pointerId);
-    redraw();
   };
   return (
     <div
@@ -143,6 +169,13 @@ export default function InkCanvas({
       style={{ width: `${zoom * 100}%` }}
     >
       <div className="paper-margin" />
+      <canvas
+        ref={committedCanvas}
+        width={PAGE_W}
+        height={PAGE_H}
+        className="committed-ink"
+        aria-hidden="true"
+      />
       <canvas
         ref={canvas}
         width={PAGE_W}

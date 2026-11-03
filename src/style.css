@@ -2129,3 +2129,26 @@ input[type="checkbox"] {
   font-size: 0.86rem;
   padding-inline: 0.65rem;
 }
+
+/* The current stroke is drawn above the committed page. */
+.paper canvas.committed-ink {
+  pointer-events: none;
+}
+@media (max-width: 720px), (orientation: portrait) and (max-width: 1180px) {
+  .learning-panel {
+    transform: translateX(0);
+    transition: transform 220ms cubic-bezier(0.2, 0.75, 0.25, 1);
+  }
+  .panel-scrim {
+    opacity: 1;
+    transition: opacity 180ms ease-out;
+  }
+  .panel-hidden .learning-panel {
+    transform: translateX(100%);
+    pointer-events: none;
+  }
+  .panel-hidden .panel-scrim {
+    opacity: 0;
+    pointer-events: none;
+  }
+}
