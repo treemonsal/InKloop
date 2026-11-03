@@ -14,7 +14,11 @@ registerHooks({
 import test from "node:test";
 import { Window } from "happy-dom";
 import "fake-indexeddb/auto";
-const window = new Window({ url: "https://inkloop.test" });
+const window = new Window({
+  url: "https://inkloop.test",
+  width: 1280,
+  height: 800,
+});
 window.document.write("<!doctype html><html><head></head><body></body></html>");
 Object.defineProperty(window.document, "compatMode", {
   value: "CSS1Compat",
@@ -167,6 +171,7 @@ test("complete notebook flow: draw, undo/redo, persist, submit snapshot, import 
     document.body.textContent?.includes("Mathematik"),
     document.body.textContent || "empty",
   );
+  await click("Mathematik");
   await click("Aufgabe einfügen");
   const task = document.querySelector("dialog textarea") as HTMLTextAreaElement;
   await setInput(task, "Solve x² = 9.");
@@ -209,7 +214,7 @@ test("complete notebook flow: draw, undo/redo, persist, submit snapshot, import 
   await act(async () => {
     await delay(400);
   });
-  assert.ok(document.body.textContent?.includes("Deine Lösung geht weiter."));
+  assert.ok(document.body.textContent?.includes("Abgabe"));
   stored = (await loadData())!;
   assert.equal(stored.notebooks[0].pages[0].submissions.length, 1);
   assert.equal(stored.notebooks[0].pages[0].submissions[0].strokes.length, 1);
@@ -304,10 +309,10 @@ test("four handwriting references replace the profile only after completion and 
   await act(async () => {
     await delay(80);
   });
-  await click("Deine Handschrift1 Referenzen hinterlegt");
+  await click("Deine Handschrift");
   await click("Schließen");
   assert.equal((await loadData())!.samples[0].id, "old-reference");
-  await click("Deine Handschrift1 Referenzen hinterlegt");
+  await click("Deine Handschrift");
   for (let step = 0; step < 4; step++) {
     const canvas = document.querySelector('dialog [data-testid="ink-canvas"]')!;
     assert.ok(canvas);
@@ -427,6 +432,8 @@ test("plugin responses arrive automatically and new tasks preserve an existing h
       "x = 3",
     );
     assert.equal(saved.bridgeCursor, "cursor-one");
+    await click("Mathematik");
+    await click("Feedback");
     assert.ok(document.body.textContent?.includes("Berücksichtige auch −3."));
     await act(async () => {
       window.dispatchEvent(new window.Event("focus"));
@@ -515,6 +522,7 @@ test("an offline submission can be sent later without creating a duplicate", asy
     await act(async () => {
       await delay(80);
     });
+    await click("Finanz- & Rechnungswesen");
     await click("Antwort abgeben");
     await act(async () => {
       await delay(400);
@@ -553,6 +561,45 @@ test("an offline submission can be sent later without creating a duplicate", asy
     host.remove();
     globalThis.fetch = originalFetch;
     globalThis.FormData = originalFormData;
+    await window.happyDOM.abort();
+  }
+});
+
+test("the library opens first and each notebook remembers its last page", async () => {
+  const d = initialData();
+  await saveData(d);
+  const host = document.body.appendChild(document.createElement("div"));
+  const app = createRoot(host);
+  try {
+    await act(async () => {
+      app.render(<App />);
+      await delay(60);
+    });
+    await act(async () => {
+      await delay(80);
+    });
+    assert.equal(document.querySelector("main h1")?.textContent, "Lernhefte");
+    assert.equal(document.querySelector('[data-testid="ink-canvas"]'), null);
+    await click("Mathematik");
+    await click("Seiten");
+    await click("Neue Seite");
+    assert.equal(
+      document.querySelector<HTMLInputElement>(".page-title")?.value,
+      "Seite 2",
+    );
+    await click("Alle Lernhefte");
+    await click("Finanz- & Rechnungswesen");
+    await click("Alle Lernhefte");
+    await click("Mathematik");
+    assert.equal(
+      document.querySelector<HTMLInputElement>(".page-title")?.value,
+      "Seite 2",
+    );
+  } finally {
+    await act(async () => {
+      app.unmount();
+    });
+    host.remove();
     await window.happyDOM.abort();
   }
 });

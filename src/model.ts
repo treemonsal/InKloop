@@ -38,6 +38,7 @@ export type Notebook = {
   color: string;
   language: "de" | "en";
   pages: Page[];
+  lastPageId?: string;
   chatUrl: string;
   claudeUrl: string;
 };
@@ -306,6 +307,7 @@ export function validateData(d: unknown): AppData {
               return false;
             }
           })()) &&
+        (n.lastPageId === undefined || string(n.lastPageId, 100)) &&
         Array.isArray(n.pages) &&
         n.pages.length > 0 &&
         n.pages.every(

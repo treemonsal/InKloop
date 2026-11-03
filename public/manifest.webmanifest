@@ -1,14 +1,14 @@
 {
   "id": "./",
-  "name": "Inkloop – Dein Lernheft",
+  "name": "Inkloop",
   "short_name": "Inkloop",
-  "description": "Dein Raum zum Denken. Handschriftlich lernen mit deinem eigenen KI-Chat.",
+  "description": "Lernhefte für handschriftliche Aufgaben.",
   "lang": "de",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
-  "background_color": "#191a19",
-  "theme_color": "#191a19",
+  "background_color": "#0c0c0e",
+  "theme_color": "#0c0c0e",
   "icons": [
     {
       "src": "./icon-192.png",

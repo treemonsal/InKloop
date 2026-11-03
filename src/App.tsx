@@ -3,6 +3,7 @@ import {
   Suspense,
   useCallback,
   useEffect,
+  useId,
   useRef,
   useState,
   type ReactNode,
@@ -23,11 +24,12 @@ import {
   ExternalLink,
   FileText,
   Fingerprint,
+  Library,
+  PanelLeft,
   HelpCircle,
   Highlighter,
   Link2,
   LoaderCircle,
-  Menu,
   MoreHorizontal,
   PenLine,
   Plus,
@@ -43,9 +45,6 @@ import {
   Minus,
   Trash2,
   CircleCheck,
-  Pencil,
-  PanelRightClose,
-  PanelRightOpen,
 } from "lucide-react";
 import {
   bridgeStatus,
@@ -104,22 +103,7 @@ function IconButton({
   );
 }
 function Logo() {
-  return (
-    <svg viewBox="0 0 40 40" fill="none" aria-hidden="true">
-      <path
-        d="M27 10C17 2 5 16 11 25c5 8 17 2 17-6 0-6-9-8-12-2-5 10 10 19 18 8"
-        stroke="currentColor"
-        strokeWidth="2.7"
-        strokeLinecap="round"
-      />
-      <path
-        d="m29 25 5 0-1 5"
-        stroke="currentColor"
-        strokeWidth="2.7"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
+  return <img src="./icon.svg" alt="" width={32} height={32} />;
 }
 function Modal({
   title,
@@ -135,6 +119,7 @@ function Modal({
   wide?: boolean;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
+  const titleId = useId();
   useEffect(() => {
     ref.current?.showModal();
     const dialog = ref.current;
@@ -143,6 +128,7 @@ function Modal({
   return (
     <dialog
       ref={ref}
+      aria-labelledby={titleId}
       className={`modal ${wide ? "modal-wide" : ""}`}
       onCancel={onClose}
       onClick={(e) => {
@@ -161,7 +147,7 @@ function Modal({
       <div className="modal-heading">
         <div>
           {eyebrow && <span className="eyebrow">{eyebrow}</span>}
-          <h2>{title}</h2>
+          <h2 id={titleId}>{title}</h2>
         </div>
         <IconButton label="Schließen" onClick={onClose}>
           <X size={20} />
@@ -178,8 +164,10 @@ function Miniature({ strokes }: { strokes: Stroke[] }) {
   }, [strokes]);
   return <canvas ref={ref} aria-hidden="true" />;
 }
-const palette = ["#eee9df", "#bfcaaf", "#dfb18a", "#a9bed7", "#c1acd6"];
-const notebookColors = ["#c49a73", "#8da995", "#a39abd", "#91afc5", "#c98b86"];
+const palette = ["#f4f5f7", "#a9abb2", "#a7c4ff"];
+const compactLayout =
+  "(max-width: 720px), (orientation: portrait) and (max-width: 1180px)";
+const prefersCompactLayout = () => window.matchMedia(compactLayout).matches;
 const sampleLabels = [
   "a g q y z · b d p · m n u · I l 1",
   "0 O · 1 7 · 2 Z · 5 S · 8 B · 6 9",
@@ -187,7 +175,6 @@ const sampleLabels = [
   "Soll / Haben · Aufwand / Ertrag · The quick brown fox.",
 ];
 type Sheet =
-  | "welcome"
   | "profile"
   | "settings"
   | "newNotebook"
@@ -204,8 +191,10 @@ export default function App() {
     [saving, setSaving] = useState<"saved" | "saving" | "error">("saved"),
     [saveError, setSaveError] = useState("");
   const [sheet, setSheet] = useState<Sheet>(null),
+    [inLibrary, setInLibrary] = useState(true),
     [sidebar, setSidebar] = useState(false),
-    [panelOpen, setPanelOpen] = useState(true),
+    [compact, setCompact] = useState(prefersCompactLayout),
+    [panelOpen, setPanelOpen] = useState(() => !prefersCompactLayout()),
     [tab, setTab] = useState<"task" | "text" | "feedback">("task"),
     [tool, setTool] = useState<Tool>("pen"),
     [color, setColor] = useState(palette[0]),
@@ -216,7 +205,6 @@ export default function App() {
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
     [newName, setNewName] = useState(""),
-    [newColor, setNewColor] = useState(notebookColors[0]),
     [profileStep, setProfileStep] = useState(0),
     [sampleInk, setSampleInk] = useState<Stroke[]>([]),
     [profileDraft, setProfileDraft] = useState<Sample[]>([]),
@@ -268,6 +256,15 @@ export default function App() {
       });
   }, []);
   useEffect(() => {
+    const query = window.matchMedia(compactLayout);
+    const update = () => {
+      setCompact(query.matches);
+      setPanelOpen(!query.matches);
+    };
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
+  useEffect(() => {
     let mounted = true;
     loadData()
       .then((d) => {
@@ -275,7 +272,6 @@ export default function App() {
         const value = d || initialData();
         lastSaved.current = d;
         setData(value);
-        if (!value.onboardingDone) setSheet("welcome");
       })
       .catch((e) => {
         if (mounted)
@@ -390,7 +386,7 @@ export default function App() {
       if (activeResponse) {
         setSelectedSubmission(activeResponse.submissionId || null);
         setTab("feedback");
-        setPanelOpen(true);
+        if (!prefersCompactLayout()) setPanelOpen(true);
       }
       notify(
         events.some((e) => e.type === "response")
@@ -522,10 +518,15 @@ export default function App() {
   };
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !sheet) {
+        if (sidebar) setSidebar(false);
+        else if (compact && panelOpen) setPanelOpen(false);
+      }
       if (
         (e.metaKey || e.ctrlKey) &&
         e.key.toLowerCase() === "z" &&
         !sheet &&
+        !inLibrary &&
         !(e.target instanceof HTMLInputElement) &&
         !(e.target instanceof HTMLTextAreaElement)
       ) {
@@ -548,8 +549,26 @@ export default function App() {
     setError("");
     if (sheet === "submit") setPrepared(null);
   };
-  const finishWelcome = () => {
-    setData((d) => (d ? { ...d, onboardingDone: true } : d));
+  const openNotebook = (n: Notebook) => {
+    setData((d) => {
+      if (!d || d.activeNotebook === n.id) return d;
+      const last = n.pages.find((p) => p.id === n.lastPageId);
+      return {
+        ...d,
+        activeNotebook: n.id,
+        activePage: last?.id ?? n.pages[0].id,
+      };
+    });
+    setSelectedSubmission(null);
+    setZoom(1);
+    setTab("task");
+    setSidebar(false);
+    setPanelOpen(!prefersCompactLayout());
+    setInLibrary(false);
+  };
+  const openLibrary = () => {
+    setSidebar(false);
+    setInLibrary(true);
   };
   const startProfile = () => {
     setProfileStep(0);
@@ -559,7 +578,16 @@ export default function App() {
     open("profile");
   };
   const navigatePage = (id: string) => {
-    setData((d) => (d ? { ...d, activePage: id } : d));
+    setData(
+      (d) =>
+        d && {
+          ...d,
+          activePage: id,
+          notebooks: d.notebooks.map((n) =>
+            n.id === d.activeNotebook ? { ...n, lastPageId: id } : n,
+          ),
+        },
+    );
     setSelectedSubmission(null);
     setZoom(1);
   };
@@ -572,13 +600,16 @@ export default function App() {
             ...d,
             activePage: p.id,
             notebooks: d.notebooks.map((n) =>
-              n.id === d.activeNotebook ? { ...n, pages: [...n.pages, p] } : n,
+              n.id === d.activeNotebook
+                ? { ...n, pages: [...n.pages, p], lastPageId: p.id }
+                : n,
             ),
           }
         : d,
     );
     setSelectedSubmission(null);
     setZoom(1);
+    setSidebar(false);
   };
   const copyText = async (text: string) => {
     try {
@@ -722,14 +753,19 @@ export default function App() {
         if (index < 0) return d;
         const pages = target.pages.filter((p) => p.id !== page.id);
         if (!pages.length) pages.push(newPage("Seite 1"));
+        const replacement = pages[Math.max(0, index - 1)].id;
         return {
           ...d,
-          activePage:
-            d.activePage === page.id
-              ? pages[Math.max(0, index - 1)].id
-              : d.activePage,
+          activePage: d.activePage === page.id ? replacement : d.activePage,
           notebooks: d.notebooks.map((n) =>
-            n === target ? { ...n, pages } : n,
+            n === target
+              ? {
+                  ...n,
+                  pages,
+                  lastPageId:
+                    n.lastPageId === page.id ? replacement : n.lastPageId,
+                }
+              : n,
           ),
         };
       });
@@ -812,7 +848,7 @@ export default function App() {
     return (
       <div className="load-error">
         <Logo />
-        <h1>Deine Notizen bleiben geschützt.</h1>
+        <h1>Lernhefte konnten nicht geladen werden</h1>
         <p>
           Inkloop konnte den lokalen Speicher nicht öffnen. Bestehende Daten
           wurden nicht überschrieben.
@@ -850,7 +886,7 @@ export default function App() {
     return (
       <div className="loading">
         <LoaderCircle className="spin" size={24} />
-        <span>Dein Lernheft wird geöffnet …</span>
+        <span>Lernhefte werden geladen</span>
       </div>
     );
   const currentChatUrl =
@@ -869,773 +905,683 @@ export default function App() {
         hidden
         onChange={(e) => restore(e.target.files?.[0])}
       />
-      {sidebar && (
-        <div className="sidebar-scrim" onClick={() => setSidebar(false)} />
-      )}
-      <aside className={`sidebar ${sidebar ? "visible" : ""}`}>
-        <a className="brand" href="#" onClick={(e) => e.preventDefault()}>
-          <span className="brand-symbol">
-            <Logo />
-          </span>
-          <span>
-            inkloop<span className="brand-dot">.</span>
-          </span>
-        </a>
-        <div className="sidebar-heading">
-          <span>DEINE LERNHEFTE</span>
-          <IconButton
-            label="Lernheft hinzufügen"
-            onClick={() => {
-              setNewName("");
-              open("newNotebook");
-            }}
-          >
-            <Plus size={17} />
-          </IconButton>
-        </div>
-        <nav aria-label="Lernhefte">
-          {data.notebooks.map((n) => (
-            <button
-              key={n.id}
-              className={`notebook-link ${n.id === notebook.id ? "selected" : ""}`}
-              onClick={() => {
-                setData((d) =>
-                  d
-                    ? { ...d, activeNotebook: n.id, activePage: n.pages[0].id }
-                    : d,
-                );
-                setSelectedSubmission(null);
-                setSidebar(false);
-              }}
-            >
-              <span className="book-icon" style={{ color: n.color }}>
-                <BookOpen size={19} />
-              </span>
-              <span>{n.name}</span>
-              {n.id === notebook.id && <span className="selected-dot" />}
-            </button>
-          ))}
-        </nav>
-        <div className="sidebar-rule" />
-        <div className="sidebar-heading">
-          <span>SEITEN IM LERNHEFT</span>
-          <span className="count">{notebook.pages.length}</span>
-        </div>
-        <div className="pages-list">
-          {notebook.pages.map((p, i) => (
-            <button
-              className={`page-link ${p.id === page.id ? "selected" : ""}`}
-              key={p.id}
-              onClick={() => {
-                navigatePage(p.id);
-                setSidebar(false);
-              }}
-            >
-              <span className="page-thumb">
-                <Miniature strokes={p.strokes} />
-                <span>{String(i + 1).padStart(2, "0")}</span>
-              </span>
-              <span className="page-link-label">
-                {p.title}
-                <small>
-                  {p.strokes.length
-                    ? "Mit Handschrift"
-                    : "Bereit für deine Gedanken"}
-                </small>
-              </span>
-            </button>
-          ))}
-        </div>
-        <button className="text-button new-page" onClick={() => addPage()}>
-          <Plus size={16} /> Neue Seite
-        </button>
-        <div className="sidebar-bottom">
-          <button className="profile-link" onClick={startProfile}>
-            <span className="profile-icon">
-              <Fingerprint size={23} />
-            </span>
-            <span>
-              Deine Handschrift
-              <small>
-                {data.samples.length
-                  ? `${data.samples.length} Referenzen hinterlegt`
-                  : "Persönliches Schriftprofil"}
-              </small>
-            </span>
-            <ChevronRight size={16} />
-          </button>
-          <div className="sidebar-tools">
-            <button onClick={() => open("settings")}>
-              <Settings2 size={17} /> Einstellungen
-            </button>
-            <IconButton label="Hilfe" onClick={() => open("help")}>
-              <HelpCircle size={18} />
-            </IconButton>
-          </div>
-          <div className="local-label">
-            <span className="status-dot" /> Auf diesem iPad gespeichert
-          </div>
-        </div>
-      </aside>
-      <main className="app-main">
-        <header className="topbar">
-          <div className="breadcrumbs">
-            <button
-              className="mobile-menu icon-button"
-              aria-label="Lernhefte öffnen"
-              onClick={() => setSidebar(true)}
-            >
-              <Menu size={20} />
-            </button>
-            <BookOpen size={15} />
-            <span>{notebook.name}</span>
-            <ChevronRight size={13} />
-            <span className="current-crumb">{page.title}</span>
-          </div>
-          <div className="topbar-actions">
-            <span className={`save-state ${saving === "error" ? "error" : ""}`}>
-              {saving === "saving" ? (
-                <LoaderCircle size={14} className="spin" />
-              ) : saving === "error" ? (
-                <HelpCircle size={14} />
-              ) : (
-                <CheckCheck size={15} />
-              )}
-              <span>
-                {saving === "saving"
-                  ? "Wird gespeichert"
-                  : saving === "error"
-                    ? "Nicht gespeichert"
-                    : "Gespeichert"}
-              </span>
-            </span>
-            <IconButton
-              label="Lernbereich ein- oder ausblenden"
-              active={panelOpen}
-              onClick={() => setPanelOpen(!panelOpen)}
-            >
-              {panelOpen ? (
-                <PanelRightClose size={19} />
-              ) : (
-                <PanelRightOpen size={19} />
-              )}
-            </IconButton>
-          </div>
-        </header>
-        {(saving === "error" || externalEdit) && (
-          <div className="error-banner">
-            {externalEdit
-              ? "Inkloop wurde in einem anderen Fenster geändert. Lade diese Seite neu, bevor du weiterschreibst."
-              : `Speichern fehlgeschlagen. ${saveError} Bitte eine Sicherung herunterladen.`}
-            <button onClick={externalEdit ? () => location.reload() : backup}>
-              {externalEdit ? "Neu laden" : "Sicherung herunterladen"}
-            </button>
-          </div>
-        )}
-        <div
-          className={`workspace ${panelOpen ? "" : "panel-hidden"}`}
-          inert={externalEdit}
-        >
-          <section className="writing-area" aria-label="Lernheft">
-            <div className="page-heading">
-              <div>
-                <div className="eyebrow">
-                  <span style={{ background: notebook.color }} /> DEIN RAUM ZUM
-                  DENKEN
-                </div>
-                <input
-                  className="page-title"
-                  value={page.title}
-                  maxLength={150}
-                  aria-label="Seitentitel"
-                  onChange={(e) => patchPage({ title: e.target.value })}
-                />
-                <div className="page-subtitle">
-                  {notebook.subject} <span>·</span> Seite {pageIndex + 1}{" "}
-                  <span>·</span>
-                  <button
-                    onClick={() =>
-                      patchNotebook({
-                        language: notebook.language === "de" ? "en" : "de",
-                      })
-                    }
-                    title="Sprache des KI-Feedbacks wechseln"
-                  >
-                    {notebook.language === "de" ? "Deutsch" : "English"}{" "}
-                    <ChevronDown size={12} />
-                  </button>
-                </div>
-              </div>
+      {inLibrary ? (
+        <main className="library">
+          <header className="library-top">
+            <div className="library-brand">
+              <Logo /> Inkloop
+            </div>
+            <div className="topbar-actions">
+              <IconButton label="Deine Handschrift" onClick={startProfile}>
+                <Fingerprint size={20} />
+              </IconButton>
               <IconButton
-                label="Seitenoptionen"
-                onClick={() => open("pageMenu")}
+                label="Einstellungen"
+                onClick={() => open("settings")}
               >
-                <MoreHorizontal size={23} />
+                <Settings2 size={20} />
               </IconButton>
             </div>
-            <div className="canvas-shell">
-              <div
-                className="ink-toolbar"
-                role="toolbar"
-                aria-label="Schreibwerkzeuge"
-              >
-                <div className="toolbar-group">
-                  <IconButton
-                    label="Stift"
-                    active={tool === "pen"}
-                    onClick={() => setTool("pen")}
-                  >
-                    <PenLine size={20} />
-                  </IconButton>
-                  <IconButton
-                    label="Textmarker"
-                    active={tool === "marker"}
-                    onClick={() => setTool("marker")}
-                  >
-                    <Highlighter size={20} />
-                  </IconButton>
-                  <IconButton
-                    label="Radierer"
-                    active={tool === "eraser"}
-                    onClick={() => setTool("eraser")}
-                  >
-                    <Eraser size={20} />
-                  </IconButton>
-                  <IconButton
-                    label="Gerade Linie"
-                    active={tool === "line"}
-                    onClick={() => setTool("line")}
-                  >
-                    <Minus size={20} />
-                  </IconButton>
-                </div>
-                <span className="toolbar-divider" />
-                <div className="ink-colors" aria-label="Stiftfarbe">
-                  {palette.map((c) => (
-                    <button
-                      key={c}
-                      className={`color-button ${c === color ? "selected" : ""}`}
-                      style={{ "--ink": c } as React.CSSProperties}
-                      aria-label={`Farbe ${c}`}
-                      aria-pressed={c === color}
-                      onClick={() => {
-                        setColor(c);
-                        if (tool === "eraser") setTool("pen");
-                      }}
-                    />
-                  ))}
-                </div>
-                <span className="toolbar-divider" />
-                <button
-                  className="width-button"
-                  aria-label={`Strichbreite ${width}. Zum Wechseln tippen.`}
-                  onClick={() =>
-                    setWidth(width === 2.5 ? 4 : width === 4 ? 1.5 : 2.5)
-                  }
-                >
-                  <span style={{ height: width * 1.5, width: width * 1.5 }} />
-                </button>
-                <span className="toolbar-divider" />
-                <IconButton
-                  label="Rückgängig"
-                  disabled={!h?.past.length}
-                  onClick={() => undo()}
-                >
-                  <Undo2 size={18} />
-                </IconButton>
-                <IconButton
-                  label="Wiederholen"
-                  disabled={!h?.future.length}
-                  onClick={() => undo(true)}
-                >
-                  <Redo2 size={18} />
-                </IconButton>
-              </div>
-              <div className="paper-scroll" key={page.id}>
-                <div className="paper-holder">
-                  <InkCanvas
-                    key={page.id}
-                    strokes={page.strokes}
-                    onChange={changeInk}
-                    tool={tool}
-                    color={color}
-                    width={width}
-                    touchWriting={data.settings.touchWriting}
-                    paper={page.paper}
-                    zoom={zoom}
-                  />
-                  {!page.strokes.length && (
-                    <div className="paper-placeholder">
-                      <span className="placeholder-line" />
-                      <p>Ein Gedanke. Ein erster Strich.</p>
-                      <span>Hier beginnt deine Lösung.</span>
-                      <svg viewBox="0 0 100 70" fill="none">
-                        <path
-                          d="M22 15c8 32 41 11 45 36M58 44l9 10 6-12"
-                          stroke="currentColor"
-                          strokeWidth="1.4"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                      </svg>
-                    </div>
-                  )}
-                </div>
-              </div>
-              <div className="canvas-footer">
-                <div className="pencil-status">
-                  <span className="status-dot" />
-                  <span>
-                    {data.settings.touchWriting
-                      ? "Finger & Pencil"
-                      : "Pencil & Maus"}
-                  </span>
-                </div>
-                <div className="paper-controls">
-                  <IconButton
-                    label="Verkleinern"
-                    disabled={zoom <= 1}
-                    onClick={() => setZoom((z) => Math.max(1, z - 0.25))}
-                  >
-                    <ZoomOut size={15} />
-                  </IconButton>
-                  <span>{Math.round(zoom * 100)} %</span>
-                  <IconButton
-                    label="Vergrößern"
-                    disabled={zoom >= 2}
-                    onClick={() => setZoom((z) => Math.min(2, z + 0.25))}
-                  >
-                    <ZoomIn size={15} />
-                  </IconButton>
-                  <span className="tiny-divider" />
-                  <select
-                    aria-label="Papierart"
-                    value={page.paper}
-                    onChange={(e) =>
-                      patchPage({ paper: e.target.value as Page["paper"] })
-                    }
-                  >
-                    <option value="grid">Kariert</option>
-                    <option value="ruled">Liniert</option>
-                    <option value="dots">Punkte</option>
-                    <option value="blank">Blanko</option>
-                  </select>
-                </div>
-              </div>
+          </header>
+          {(saving === "error" || externalEdit) && (
+            <div className="error-banner" role="alert">
+              {externalEdit
+                ? "Änderungen in einem anderen Fenster."
+                : "Speichern fehlgeschlagen."}
+              <button onClick={externalEdit ? () => location.reload() : backup}>
+                {externalEdit ? "Neu laden" : "Sicherung herunterladen"}
+              </button>
             </div>
-            <div className="writing-bottom">
-              <span>
-                <ShieldCheck size={14} /> Deine Striche bleiben immer erhalten.
-              </span>
-              <div>
-                <IconButton
-                  label="Vorherige Seite"
-                  disabled={pageIndex === 0}
-                  onClick={() => navigatePage(notebook.pages[pageIndex - 1].id)}
-                >
-                  <ChevronLeft size={17} />
-                </IconButton>
-                <span>
-                  {pageIndex + 1} / {notebook.pages.length}
-                </span>
-                <IconButton
-                  label="Nächste Seite"
-                  disabled={pageIndex === notebook.pages.length - 1}
-                  onClick={() => navigatePage(notebook.pages[pageIndex + 1].id)}
-                >
-                  <ChevronRight size={17} />
-                </IconButton>
-              </div>
-            </div>
-          </section>
-          {panelOpen && (
-            <aside className="learning-panel" aria-label="Lernbereich">
-              <div className="panel-heading">
-                <div className="tutor-mark">
-                  <Sparkles size={20} />
-                </div>
-                <div>
-                  <h2>Weiterdenken.</h2>
-                  <p>Mit deinem eigenen KI-Chat.</p>
-                </div>
-              </div>
-              <div
-                className="panel-tabs"
-                role="tablist"
-                aria-label="Lernansicht"
+          )}
+          <div className="library-content">
+            <div className="library-heading">
+              <h1>Lernhefte</h1>
+              <button
+                className="primary"
+                onClick={() => {
+                  setNewName("");
+                  open("newNotebook");
+                }}
               >
-                {(["task", "text", "feedback"] as const).map((t, i) => (
+                <Plus size={17} /> Neues Lernheft
+              </button>
+            </div>
+            <ul className="library-list" aria-label="Lernhefte">
+              {data.notebooks.map((n) => (
+                <li key={n.id}>
                   <button
-                    key={t}
-                    id={`tab-${t}`}
-                    role="tab"
-                    aria-selected={tab === t}
-                    aria-controls="learning-content"
-                    className={tab === t ? "selected" : ""}
-                    onClick={() => setTab(t)}
+                    className="library-notebook"
+                    aria-label={n.name}
+                    onClick={() => openNotebook(n)}
                   >
-                    {["Aufgabe", "Computertext", "Feedback"][i]}
-                    {((t === "task" && page.task) ||
-                      (t === "text" && submission?.transcription) ||
-                      (t === "feedback" && submission?.feedback)) && <span />}
+                    <span className="library-book">
+                      <BookOpen size={23} strokeWidth={1.6} />
+                    </span>
+                    <span className="library-name">
+                      <span>{n.name}</span>
+                      <small>
+                        {n.pages.length}{" "}
+                        {n.pages.length === 1 ? "Seite" : "Seiten"}
+                      </small>
+                    </span>
+                    <ChevronRight className="library-arrow" size={18} />
                   </button>
-                ))}
-              </div>
-              <div
-                className="panel-content"
-                id="learning-content"
-                role="tabpanel"
-                aria-labelledby={`tab-${tab}`}
-              >
-                {tab === "task" &&
-                  (page.task ? (
-                    <div className="task-content">
-                      <div className="section-label">
-                        DEINE AUFGABE{" "}
-                        <button
-                          onClick={() => open("task", page.task)}
-                          aria-label="Aufgabe bearbeiten"
-                        >
-                          <Pencil size={14} />
-                        </button>
-                      </div>
-                      <RichText text={page.task} />
-                      <button
-                        className="text-button small"
-                        onClick={() => open("task", page.task)}
-                      >
-                        <PenLine size={14} /> Bearbeiten
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="panel-empty">
-                      <div className="empty-icon">
-                        <FileText size={27} strokeWidth={1.4} />
-                      </div>
-                      <h3>Was möchtest du lösen?</h3>
-                      <p>
-                        {bridgeReady
-                          ? "Lass ChatGPT mit dem Inkloop-Plugin eine Aufgabe senden oder füge sie hier ein. Deine Lösung schreibst du ins Lernheft."
-                          : "Kopiere eine Aufgabe aus deinem Chat hierher. Deine Lösung schreibst du direkt ins Lernheft."}
-                      </p>
-                      <button
-                        className="secondary"
-                        onClick={() => open("task")}
-                      >
-                        <Plus size={16} /> Aufgabe einfügen
-                      </button>
-                    </div>
-                  ))}
-                {tab === "text" &&
-                  (submission?.transcription ? (
-                    <>
-                      <div className="section-label">
-                        DEINE ABSCHRIFT{" "}
-                        <button
-                          aria-label="Abschrift kopieren"
-                          onClick={() => copyText(submission.transcription)}
-                        >
-                          <Copy size={14} />
-                        </button>
-                      </div>
-                      <RichText text={submission.transcription} />
-                      <details className="edit-details">
-                        <summary>Abschrift korrigieren</summary>
-                        <textarea
-                          aria-label="Abschrift korrigieren"
-                          maxLength={MAX_TEXT_LENGTH}
-                          value={submission.transcription}
-                          onChange={(e) =>
-                            editSubmission({
-                              transcription: e.target.value.slice(
-                                0,
-                                MAX_TEXT_LENGTH,
-                              ),
-                            })
-                          }
-                        />
-                        <small>Deine Korrektur wird lokal gespeichert.</small>
-                      </details>
-                    </>
-                  ) : (
-                    <div className="panel-empty">
-                      <div className="empty-icon">
-                        <PenLine size={27} strokeWidth={1.4} />
-                      </div>
-                      <h3>Deine Gedanken, lesbar.</h3>
-                      <p>
-                        Gib deine Antwort als Bild an deinen Chat weiter.
-                        Übernimm anschließend seine Abschrift hierher.
-                      </p>
-                      <button
-                        className="secondary"
-                        onClick={() => open("import")}
-                      >
-                        <ArrowDownToLine size={16} /> KI-Antwort übernehmen
-                      </button>
-                    </div>
-                  ))}
-                {tab === "feedback" &&
-                  (submission?.feedback ? (
-                    <>
-                      <div className="section-label">
-                        AUS DEINEM KI-CHAT{" "}
-                        <button
-                          aria-label="Feedback kopieren"
-                          onClick={() => copyText(submission.feedback)}
-                        >
-                          <Copy size={14} />
-                        </button>
-                      </div>
-                      <RichText text={submission.feedback} />
-                      {submission.nextTask && (
-                        <div className="next-task">
-                          <span className="eyebrow">WEITER GEHT’S</span>
-                          <RichText text={submission.nextTask} />
-                          <button
-                            className="secondary"
-                            onClick={() => {
-                              addPage(submission.nextTask);
-                              setTab("task");
-                            }}
-                          >
-                            <Plus size={16} /> Auf neuer Seite lösen
-                          </button>
-                        </div>
-                      )}
-                    </>
-                  ) : (
-                    <div className="panel-empty">
-                      <div className="empty-icon">
-                        <Sparkles size={27} strokeWidth={1.4} />
-                      </div>
-                      <h3>Ein Hinweis bringt dich weiter.</h3>
-                      <p>
-                        {bridgeReady && data.settings.provider === "chatgpt"
-                          ? "Dein Chat liest abgegebene Lösungen mit dem Inkloop-Plugin. Seine Rückmeldung erscheint hier automatisch, sobald er sie zurückgeschrieben hat."
-                          : "Dein Chat liest deine Lösung und hilft dir beim nächsten Schritt. Du entscheidest, wann du abgibst."}
-                      </p>
-                      <button
-                        className="secondary"
-                        onClick={() => open("import")}
-                      >
-                        <ArrowDownToLine size={16} /> KI-Antwort übernehmen
-                      </button>
-                    </div>
-                  ))}
-                {page.submissions.length > 0 && (
-                  <div className="submission-history">
-                    <label htmlFor="submission-select">
-                      Abgaben auf dieser Seite
-                    </label>
-                    <select
-                      id="submission-select"
-                      value={submission?.id || ""}
-                      onChange={(e) => setSelectedSubmission(e.target.value)}
-                    >
-                      {[...page.submissions].reverse().map((s, i) => (
-                        <option value={s.id} key={s.id}>
-                          Abgabe {page.submissions.length - i} ·{" "}
-                          {new Date(s.createdAt).toLocaleTimeString("de-CH", {
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })}
-                          {s.feedback ? " · mit Antwort" : ""}
-                        </option>
-                      ))}
-                    </select>
-                    {submission && data.settings.provider === "chatgpt" && (
-                      <>
-                        <small>
-                          {submission.handoff?.sent
-                            ? "Für ChatGPT bereitgestellt"
-                            : submission.handoff
-                              ? "Lokal gespeichert"
-                              : "Sendestatus unbekannt"}
-                        </small>
-                        <button
-                          className="text-button small"
-                          disabled={busy}
-                          onClick={() =>
-                            void showHandoff(
-                              notebook,
-                              page.id,
-                              submission,
-                              submission.handoff ?? {
-                                subject: notebook.subject,
-                                language: notebook.language,
-                                samples: [],
-                                sent: false,
-                              },
-                              !submission.handoff?.sent,
-                            )
-                          }
-                        >
-                          {submission.handoff?.sent
-                            ? "Übergabe öffnen"
-                            : "Erneut an ChatGPT senden"}
-                        </button>
-                      </>
-                    )}
-                    <button
-                      className="text-button small"
-                      onClick={() => open("import")}
-                    >
-                      <ArrowDownToLine size={14} /> Antwort zu dieser Abgabe
-                      übernehmen
-                    </button>
-                  </div>
-                )}
-              </div>
-              <div className="panel-bottom">
-                <div className="chat-choice">
-                  <span className="section-label">DEIN KI-CHAT</span>
-                  <select
-                    aria-label="KI-Anbieter"
-                    value={data.settings.provider}
-                    onChange={(e) =>
-                      setData({
-                        ...data,
-                        settings: {
-                          ...data.settings,
-                          provider: e.target.value as "chatgpt" | "claude",
-                        },
-                      })
-                    }
+                </li>
+              ))}
+            </ul>
+          </div>
+        </main>
+      ) : (
+        <>
+          {sidebar && (
+            <>
+              <button
+                className="sidebar-scrim"
+                aria-label="Seiten schliessen"
+                onClick={() => setSidebar(false)}
+              />
+              <aside className="sidebar visible" aria-label="Seiten">
+                <div className="drawer-heading">
+                  <h2>Seiten</h2>
+                  <IconButton
+                    label="Schliessen"
+                    onClick={() => setSidebar(false)}
                   >
-                    <option value="chatgpt">ChatGPT</option>
-                    <option value="claude">Claude</option>
-                  </select>
+                    <X size={20} />
+                  </IconButton>
                 </div>
+                <div className="pages-list">
+                  {notebook.pages.map((p, i) => (
+                    <button
+                      className={`page-link ${p.id === page.id ? "selected" : ""}`}
+                      key={p.id}
+                      onClick={() => {
+                        navigatePage(p.id);
+                        setSidebar(false);
+                      }}
+                    >
+                      <span className="page-thumb">
+                        <Miniature strokes={p.strokes} />
+                        <span>{String(i + 1).padStart(2, "0")}</span>
+                      </span>
+                      <span className="page-link-label">{p.title}</span>
+                    </button>
+                  ))}
+                </div>
+                <button
+                  className="text-button new-page"
+                  onClick={() => addPage()}
+                >
+                  <Plus size={16} /> Neue Seite
+                </button>
+              </aside>
+            </>
+          )}
+          <main className="app-main">
+            <header className="topbar">
+              <div className="editor-navigation">
+                <button
+                  className="icon-button"
+                  aria-label="Alle Lernhefte"
+                  onClick={openLibrary}
+                >
+                  <Library size={20} />
+                </button>
+                <button
+                  className="icon-button"
+                  aria-label="Seiten"
+                  aria-expanded={sidebar}
+                  onClick={() => setSidebar(!sidebar)}
+                >
+                  <PanelLeft size={20} />
+                </button>
+                <span className="editor-notebook" title={notebook.name}>
+                  {notebook.name}
+                </span>
+              </div>
+              <div className="topbar-actions">
+                <span
+                  role="status"
+                  className={`save-state ${saving === "error" ? "error" : ""}`}
+                  title={saving === "saved" ? "Gespeichert" : "Speicherstatus"}
+                >
+                  {saving === "saving" ? (
+                    <LoaderCircle size={16} className="spin" />
+                  ) : saving === "error" ? (
+                    <HelpCircle size={16} />
+                  ) : (
+                    <CheckCheck size={17} />
+                  )}
+                  <span className="visually-hidden">
+                    {saving === "saving"
+                      ? "Wird gespeichert"
+                      : saving === "error"
+                        ? "Nicht gespeichert"
+                        : "Gespeichert"}
+                  </span>
+                </span>
+                <button
+                  className="panel-toggle secondary"
+                  aria-label="Lernbereich"
+                  aria-expanded={panelOpen}
+                  onClick={() => setPanelOpen(!panelOpen)}
+                >
+                  <FileText size={17} />
+                  <span>Lernbereich</span>
+                </button>
                 <button
                   className="primary submit-button"
-                  disabled={!page.strokes.length || busy}
+                  aria-label="Antwort abgeben"
+                  disabled={!page.strokes.length || busy || externalEdit}
                   onClick={prepareSubmission}
                 >
                   {busy ? (
-                    <LoaderCircle size={17} className="spin" />
+                    <LoaderCircle size={16} className="spin" />
                   ) : (
-                    <ArrowUpRight size={18} />
-                  )}{" "}
-                  Antwort abgeben
-                </button>
-                <p>
+                    <ArrowUpRight size={17} />
+                  )}
                   {bridgeReady && data.settings.provider === "chatgpt"
-                    ? "Plugin-Verbindung bereit · keine KI-API-Kosten"
-                    : "Über deinen Original-Chat. Ohne zusätzliche API-Kosten."}
-                </p>
-                <button
-                  className="chat-link text-button small"
-                  onClick={() => open("settings")}
-                >
-                  <Link2 size={13} />
-                  {currentChatUrl
-                    ? "Chat-Link hinterlegt"
-                    : "Bestehenden Chat verknüpfen"}
+                    ? "An ChatGPT"
+                    : "Abgeben"}
                 </button>
               </div>
-            </aside>
-          )}
-        </div>
-      </main>
-      {sheet === "welcome" && (
-        <Modal
-          title="Dein Raum zum Denken."
-          eyebrow="WILLKOMMEN BEI INKLOOP"
-          onClose={() => {
-            finishWelcome();
-            close();
-          }}
-          wide
-        >
-          <div className="welcome-illustration">
-            <div className="welcome-paper">
-              <span>Idee</span>
-              <svg viewBox="0 0 360 145" fill="none">
-                <path
-                  d="M35 75c19-38 33-31 28-1-9 27-36 7-13-14 23-16 28 39 49 17 27-33 15-32 2-10-15 31 17 31 31 4 19-34 29-4 9 12 35 15 14-41 35-24 5 25 18 34 31 10M235 71l46-12m-10-8 13 9-8 10M24 106c69 5 106-7 186-2"
-                  stroke="currentColor"
-                  strokeWidth="3"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-                <circle
-                  cx="306"
-                  cy="59"
-                  r="21"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                />
-              </svg>
-              <small>schreiben → verstehen → weiterdenken</small>
+            </header>
+            {(saving === "error" || externalEdit) && (
+              <div className="error-banner">
+                {externalEdit
+                  ? "Inkloop wurde in einem anderen Fenster geändert. Lade diese Seite neu, bevor du weiterschreibst."
+                  : `Speichern fehlgeschlagen. ${saveError} Bitte eine Sicherung herunterladen.`}
+                <button
+                  onClick={externalEdit ? () => location.reload() : backup}
+                >
+                  {externalEdit ? "Neu laden" : "Sicherung herunterladen"}
+                </button>
+              </div>
+            )}
+            <div
+              className={`workspace ${panelOpen ? "" : "panel-hidden"}`}
+              inert={externalEdit}
+            >
+              <section
+                className="writing-area"
+                aria-label="Lernheft"
+                inert={sidebar || (compact && panelOpen)}
+              >
+                <div className="page-heading">
+                  <div>
+                    <input
+                      className="page-title"
+                      value={page.title}
+                      maxLength={150}
+                      aria-label="Seitentitel"
+                      onChange={(e) => patchPage({ title: e.target.value })}
+                    />
+                    <div className="page-subtitle">
+                      <button
+                        onClick={() =>
+                          patchNotebook({
+                            language: notebook.language === "de" ? "en" : "de",
+                          })
+                        }
+                        title="Sprache des KI-Feedbacks wechseln"
+                      >
+                        {notebook.language === "de" ? "Deutsch" : "English"}{" "}
+                        <ChevronDown size={12} />
+                      </button>
+                    </div>
+                  </div>
+                  <IconButton
+                    label="Seitenoptionen"
+                    onClick={() => open("pageMenu")}
+                  >
+                    <MoreHorizontal size={23} />
+                  </IconButton>
+                </div>
+                <div className="canvas-shell">
+                  <div
+                    className="ink-toolbar"
+                    role="toolbar"
+                    aria-label="Schreibwerkzeuge"
+                  >
+                    <div className="toolbar-group">
+                      <IconButton
+                        label="Stift"
+                        active={tool === "pen"}
+                        onClick={() => setTool("pen")}
+                      >
+                        <PenLine size={20} />
+                      </IconButton>
+                      <IconButton
+                        label="Textmarker"
+                        active={tool === "marker"}
+                        onClick={() => setTool("marker")}
+                      >
+                        <Highlighter size={20} />
+                      </IconButton>
+                      <IconButton
+                        label="Radierer"
+                        active={tool === "eraser"}
+                        onClick={() => setTool("eraser")}
+                      >
+                        <Eraser size={20} />
+                      </IconButton>
+                      <IconButton
+                        label="Gerade Linie"
+                        active={tool === "line"}
+                        onClick={() => setTool("line")}
+                      >
+                        <Minus size={20} />
+                      </IconButton>
+                    </div>
+                    <span className="toolbar-divider" />
+                    <div className="ink-colors" aria-label="Stiftfarbe">
+                      {palette.map((c) => (
+                        <button
+                          key={c}
+                          className={`color-button ${c === color ? "selected" : ""}`}
+                          style={{ "--ink": c } as React.CSSProperties}
+                          aria-label={`Farbe ${c}`}
+                          aria-pressed={c === color}
+                          onClick={() => {
+                            setColor(c);
+                            if (tool === "eraser") setTool("pen");
+                          }}
+                        />
+                      ))}
+                    </div>
+                    <span className="toolbar-divider" />
+                    <button
+                      className="width-button"
+                      aria-label={`Strichbreite ${width}. Zum Wechseln tippen.`}
+                      onClick={() =>
+                        setWidth(width === 2.5 ? 4 : width === 4 ? 1.5 : 2.5)
+                      }
+                    >
+                      <span
+                        style={{ height: width * 1.5, width: width * 1.5 }}
+                      />
+                    </button>
+                    <span className="toolbar-divider" />
+                    <IconButton
+                      label="Rückgängig"
+                      disabled={!h?.past.length}
+                      onClick={() => undo()}
+                    >
+                      <Undo2 size={18} />
+                    </IconButton>
+                    <IconButton
+                      label="Wiederholen"
+                      disabled={!h?.future.length}
+                      onClick={() => undo(true)}
+                    >
+                      <Redo2 size={18} />
+                    </IconButton>
+                  </div>
+                  <div className="paper-scroll" key={page.id}>
+                    <div className="paper-holder">
+                      <InkCanvas
+                        key={page.id}
+                        strokes={page.strokes}
+                        onChange={changeInk}
+                        tool={tool}
+                        color={color}
+                        width={width}
+                        touchWriting={data.settings.touchWriting}
+                        paper={page.paper}
+                        zoom={zoom}
+                      />
+                    </div>
+                  </div>
+                  <div className="canvas-footer">
+                    <div className="paper-controls">
+                      <IconButton
+                        label="Verkleinern"
+                        disabled={zoom <= 1}
+                        onClick={() => setZoom((z) => Math.max(1, z - 0.25))}
+                      >
+                        <ZoomOut size={15} />
+                      </IconButton>
+                      <span>{Math.round(zoom * 100)} %</span>
+                      <IconButton
+                        label="Vergrößern"
+                        disabled={zoom >= 2}
+                        onClick={() => setZoom((z) => Math.min(2, z + 0.25))}
+                      >
+                        <ZoomIn size={15} />
+                      </IconButton>
+                      <span className="tiny-divider" />
+                      <select
+                        aria-label="Papierart"
+                        value={page.paper}
+                        onChange={(e) =>
+                          patchPage({ paper: e.target.value as Page["paper"] })
+                        }
+                      >
+                        <option value="grid">Kariert</option>
+                        <option value="ruled">Liniert</option>
+                        <option value="dots">Punkte</option>
+                        <option value="blank">Blanko</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+                <div className="writing-bottom">
+                  <div>
+                    <IconButton
+                      label="Vorherige Seite"
+                      disabled={pageIndex === 0}
+                      onClick={() =>
+                        navigatePage(notebook.pages[pageIndex - 1].id)
+                      }
+                    >
+                      <ChevronLeft size={17} />
+                    </IconButton>
+                    <span>
+                      {pageIndex + 1} / {notebook.pages.length}
+                    </span>
+                    <IconButton
+                      label="Nächste Seite"
+                      disabled={pageIndex === notebook.pages.length - 1}
+                      onClick={() =>
+                        navigatePage(notebook.pages[pageIndex + 1].id)
+                      }
+                    >
+                      <ChevronRight size={17} />
+                    </IconButton>
+                  </div>
+                </div>
+              </section>
+              {panelOpen && (
+                <>
+                  {compact && (
+                    <button
+                      className="panel-scrim"
+                      aria-label="Lernbereich schliessen"
+                      onClick={() => setPanelOpen(false)}
+                    />
+                  )}
+                  <aside
+                    className="learning-panel"
+                    aria-label="Lernbereich"
+                    inert={sidebar}
+                  >
+                    <div
+                      className="panel-tabs"
+                      role="tablist"
+                      aria-label="Lernansicht"
+                      onKeyDown={(e) => {
+                        if (
+                          !["ArrowLeft", "ArrowRight", "Home", "End"].includes(
+                            e.key,
+                          )
+                        )
+                          return;
+                        e.preventDefault();
+                        const tabs = ["task", "text", "feedback"] as const;
+                        const i = tabs.indexOf(tab);
+                        const next =
+                          tabs[
+                            e.key === "Home"
+                              ? 0
+                              : e.key === "End"
+                                ? 2
+                                : (i + (e.key === "ArrowRight" ? 1 : 2)) % 3
+                          ];
+                        setTab(next);
+                        document.getElementById(`tab-${next}`)?.focus();
+                      }}
+                    >
+                      {(["task", "text", "feedback"] as const).map((t, i) => (
+                        <button
+                          key={t}
+                          id={`tab-${t}`}
+                          role="tab"
+                          aria-selected={tab === t}
+                          tabIndex={tab === t ? 0 : -1}
+                          aria-controls="learning-content"
+                          className={tab === t ? "selected" : ""}
+                          onClick={() => setTab(t)}
+                        >
+                          {["Aufgabe", "Abschrift", "Feedback"][i]}
+                          {((t === "task" && page.task) ||
+                            (t === "text" && submission?.transcription) ||
+                            (t === "feedback" && submission?.feedback)) && (
+                            <span />
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                    <div
+                      className="panel-content"
+                      id="learning-content"
+                      role="tabpanel"
+                      aria-labelledby={`tab-${tab}`}
+                    >
+                      {tab === "task" &&
+                        (page.task ? (
+                          <div className="task-content">
+                            <RichText text={page.task} />
+                            <button
+                              className="text-button small"
+                              onClick={() => open("task", page.task)}
+                            >
+                              <PenLine size={14} /> Bearbeiten
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="panel-empty">
+                            <p>Keine Aufgabe</p>
+                            <button
+                              className="secondary"
+                              onClick={() => open("task")}
+                            >
+                              <Plus size={16} /> Aufgabe einfügen
+                            </button>
+                          </div>
+                        ))}
+                      {tab === "text" &&
+                        (submission?.transcription ? (
+                          <>
+                            <div className="section-label">
+                              Abschrift{" "}
+                              <button
+                                aria-label="Abschrift kopieren"
+                                onClick={() =>
+                                  copyText(submission.transcription)
+                                }
+                              >
+                                <Copy size={14} />
+                              </button>
+                            </div>
+                            <RichText text={submission.transcription} />
+                            <details className="edit-details">
+                              <summary>Abschrift korrigieren</summary>
+                              <textarea
+                                aria-label="Abschrift korrigieren"
+                                maxLength={MAX_TEXT_LENGTH}
+                                value={submission.transcription}
+                                onChange={(e) =>
+                                  editSubmission({
+                                    transcription: e.target.value.slice(
+                                      0,
+                                      MAX_TEXT_LENGTH,
+                                    ),
+                                  })
+                                }
+                              />
+                              <small>
+                                Deine Korrektur wird lokal gespeichert.
+                              </small>
+                            </details>
+                          </>
+                        ) : (
+                          <div className="panel-empty">
+                            <p>Keine Abschrift</p>
+                            <button
+                              className="secondary"
+                              onClick={() => open("import")}
+                            >
+                              <ArrowDownToLine size={16} /> KI-Antwort
+                              übernehmen
+                            </button>
+                          </div>
+                        ))}
+                      {tab === "feedback" &&
+                        (submission?.feedback ? (
+                          <>
+                            <div className="section-label">
+                              Feedback{" "}
+                              <button
+                                aria-label="Feedback kopieren"
+                                onClick={() => copyText(submission.feedback)}
+                              >
+                                <Copy size={14} />
+                              </button>
+                            </div>
+                            <RichText text={submission.feedback} />
+                            {submission.nextTask && (
+                              <div className="next-task">
+                                <span className="eyebrow">Nächste Aufgabe</span>
+                                <RichText text={submission.nextTask} />
+                                <button
+                                  className="secondary"
+                                  onClick={() => {
+                                    addPage(submission.nextTask);
+                                    setTab("task");
+                                  }}
+                                >
+                                  <Plus size={16} /> Auf neuer Seite lösen
+                                </button>
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          <div className="panel-empty">
+                            <p>Kein Feedback</p>
+                            <button
+                              className="secondary"
+                              onClick={() => open("import")}
+                            >
+                              <ArrowDownToLine size={16} /> KI-Antwort
+                              übernehmen
+                            </button>
+                          </div>
+                        ))}
+                      {page.submissions.length > 0 && (
+                        <div className="submission-history">
+                          <label htmlFor="submission-select">
+                            Abgaben auf dieser Seite
+                          </label>
+                          <select
+                            id="submission-select"
+                            value={submission?.id || ""}
+                            onChange={(e) =>
+                              setSelectedSubmission(e.target.value)
+                            }
+                          >
+                            {[...page.submissions].reverse().map((s, i) => (
+                              <option value={s.id} key={s.id}>
+                                Abgabe {page.submissions.length - i} ·{" "}
+                                {new Date(s.createdAt).toLocaleTimeString(
+                                  "de-CH",
+                                  {
+                                    hour: "2-digit",
+                                    minute: "2-digit",
+                                  },
+                                )}
+                                {s.feedback ? " · mit Antwort" : ""}
+                              </option>
+                            ))}
+                          </select>
+                          {submission &&
+                            data.settings.provider === "chatgpt" && (
+                              <>
+                                <small>
+                                  {submission.handoff?.sent
+                                    ? "Für ChatGPT bereitgestellt"
+                                    : submission.handoff
+                                      ? "Lokal gespeichert"
+                                      : "Sendestatus unbekannt"}
+                                </small>
+                                <button
+                                  className="text-button small"
+                                  disabled={busy}
+                                  onClick={() =>
+                                    void showHandoff(
+                                      notebook,
+                                      page.id,
+                                      submission,
+                                      submission.handoff ?? {
+                                        subject: notebook.subject,
+                                        language: notebook.language,
+                                        samples: [],
+                                        sent: false,
+                                      },
+                                      !submission.handoff?.sent,
+                                    )
+                                  }
+                                >
+                                  {submission.handoff?.sent
+                                    ? "Übergabe öffnen"
+                                    : "Erneut an ChatGPT senden"}
+                                </button>
+                              </>
+                            )}
+                          <button
+                            className="text-button small"
+                            onClick={() => open("import")}
+                          >
+                            <ArrowDownToLine size={14} /> Antwort zu dieser
+                            Abgabe übernehmen
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                    <div className="panel-bottom">
+                      <div className="chat-choice">
+                        <span className="section-label">Chat</span>
+                        <select
+                          aria-label="KI-Anbieter"
+                          value={data.settings.provider}
+                          onChange={(e) =>
+                            setData({
+                              ...data,
+                              settings: {
+                                ...data.settings,
+                                provider: e.target.value as
+                                  "chatgpt" | "claude",
+                              },
+                            })
+                          }
+                        >
+                          <option value="chatgpt">ChatGPT</option>
+                          <option value="claude">Claude</option>
+                        </select>
+                      </div>
+                      <button
+                        className="chat-link text-button small"
+                        onClick={() => open("settings")}
+                      >
+                        <Link2 size={13} />
+                        {currentChatUrl ? "Chat ändern" : "Chat verknüpfen"}
+                      </button>
+                    </div>
+                  </aside>
+                </>
+              )}
             </div>
-            <span className="welcome-badge">
-              <PenLine size={18} /> Mit deinem Apple Pencil
-            </span>
-          </div>
-          <p className="modal-lead">
-            Schreib, wie du denkst. Lerne mit dem Chat, den du schon kennst.
-          </p>
-          <div className="welcome-steps">
-            <div>
-              <span>01</span>
-              <p>
-                <strong>Mit der Hand lösen</strong>
-                <small>Dein Lernheft für alle Fächer.</small>
-              </p>
-            </div>
-            <div>
-              <span>02</span>
-              <p>
-                <strong>Bewusst abgeben</strong>
-                <small>Erst auf deinen Knopfdruck.</small>
-              </p>
-            </div>
-            <div>
-              <span>03</span>
-              <p>
-                <strong>Im eigenen Chat lernen</strong>
-                <small>Per ChatGPT-Plugin oder Bildübergabe.</small>
-              </p>
-            </div>
-          </div>
-          <div className="info-note">
-            <Fingerprint size={20} />
-            <span>
-              Ein kurzer Schrifttest gibt deiner KI persönliche Lesehilfen. Er
-              ist optional und garantiert keine fehlerfreie Erkennung.
-            </span>
-          </div>
-          <button
-            className="primary full"
-            onClick={() => {
-              finishWelcome();
-              startProfile();
-            }}
-          >
-            Meine Handschrift kennenlernen <ArrowRight size={17} />
-          </button>
-          <button
-            className="text-button centered"
-            onClick={() => {
-              finishWelcome();
-              close();
-            }}
-          >
-            Direkt zum Lernheft
-          </button>
-        </Modal>
+          </main>
+        </>
       )}
       {sheet === "profile" && (
         <Modal
-          title="So schreibst du."
-          eyebrow={`HANDSCHRIFTREFERENZEN · ${profileStep + 1} VON ${sampleLabels.length}`}
+          title={`Handschriftprobe ${profileStep + 1} von ${sampleLabels.length}`}
           onClose={close}
           wide
         >
           <p className="muted">
-            Schreibe die Vorgabe in deinem normalen Tempo ab. Die beschrifteten
-            Proben werden mit deinen Abgaben als Lesehilfe geteilt.
+            Schreibe die Vorgabe ab. Beim Abgeben kannst du die Proben als
+            Lesehilfe mitsenden.
           </p>
           <div className="profile-progress">
             {sampleLabels.map((_, i) => (
@@ -1672,14 +1618,6 @@ export default function App() {
               <Eraser size={14} /> Neu schreiben
             </button>
           </div>
-          <div className="info-note">
-            <Fingerprint size={19} />
-            <span>
-              Referenzprofil statt Modelltraining: Die KI vergleicht diese
-              Proben mit deiner Lösung. Deine bisherigen Referenzen werden erst
-              am Ende ersetzt.
-            </span>
-          </div>
           <button
             className="primary full"
             disabled={!sampleInk.length}
@@ -1711,22 +1649,23 @@ export default function App() {
         </Modal>
       )}
       {sheet === "newNotebook" && (
-        <Modal
-          title="Ein neues Kapitel."
-          eyebrow="NEUES LERNHEFT"
-          onClose={close}
-        >
+        <Modal title="Neues Lernheft" onClose={close}>
           <form
             onSubmit={(e) => {
               e.preventDefault();
               if (!newName.trim()) return;
-              const n = newNotebook(newName.trim(), newName.trim(), newColor);
+              const n = newNotebook(newName.trim());
               setData({
                 ...data,
                 notebooks: [...data.notebooks, n],
                 activeNotebook: n.id,
                 activePage: n.pages[0].id,
               });
+              setInLibrary(false);
+              setTab("task");
+              setSelectedSubmission(null);
+              setZoom(1);
+              setPanelOpen(!prefersCompactLayout());
               close();
             }}
           >
@@ -1738,25 +1677,10 @@ export default function App() {
               id="notebook-name"
               className="text-input"
               maxLength={150}
-              placeholder="Zum Beispiel English Literature"
+              placeholder="Z. B. Französisch"
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
             />
-            <span className="field-label">Farbe</span>
-            <div className="notebook-colors">
-              {notebookColors.map((c) => (
-                <button
-                  type="button"
-                  aria-label={`Lernheftfarbe ${c}`}
-                  aria-pressed={newColor === c}
-                  key={c}
-                  style={{ background: c }}
-                  onClick={() => setNewColor(c)}
-                >
-                  {newColor === c && <Check size={18} />}
-                </button>
-              ))}
-            </div>
             <button
               className="primary full"
               disabled={!newName.trim()}
@@ -1768,15 +1692,7 @@ export default function App() {
         </Modal>
       )}
       {sheet === "task" && (
-        <Modal
-          title="Woran arbeitest du?"
-          eyebrow="DEINE AUFGABE"
-          onClose={close}
-        >
-          <p className="muted">
-            Kopiere die Aufgabe aus deinem Chat. Formeln, Tabellen und längere
-            Texte sind willkommen.
-          </p>
+        <Modal title="Aufgabe" onClose={close}>
           <textarea
             autoFocus
             className="large-textarea"
@@ -1798,24 +1714,15 @@ export default function App() {
         </Modal>
       )}
       {sheet === "submit" && prepared && (
-        <Modal
-          title="Deine Lösung geht weiter."
-          eyebrow="ANTWORT ABGEBEN"
-          onClose={close}
-          wide
-        >
+        <Modal title="Abgabe" onClose={close} wide>
           {prepared.shared && (
             <div className="plugin-handoff">
               <div>
                 <Sparkles size={20} />
-                <h3>Für dein ChatGPT-Plugin bereit.</h3>
+                <h3>Für ChatGPT bereit</h3>
               </div>
               <p>
-                Wenn Inkloop in deinem Chat aktiviert ist, kann ChatGPT die
-                Abgabe direkt lesen und seine Antwort ins Lernheft
-                zurückschreiben. Kopiere den folgenden Auftrag in deinen
-                bestehenden Chat. Bei der ersten Nutzung aktiviere dort das
-                Inkloop-Plugin.
+                Kopiere den Auftrag in deinen Chat mit aktivem Inkloop Plugin.
               </p>
               <button
                 className="primary"
@@ -1827,153 +1734,114 @@ export default function App() {
               >
                 <Copy size={15} /> Auftrag für ChatGPT kopieren
               </button>
-              <small>
-                Die Antwort erscheint hier, solange Inkloop online geöffnet ist.
-                Der Chat startet erst, wenn du den Auftrag dort sendest.
-              </small>
             </div>
           )}
-          <div className="handoff-layout">
-            <a
-              href={prepared.url}
-              download={fileName}
-              className="submission-preview"
-            >
-              <img
-                src={prepared.url}
-                alt="Deine handschriftliche Antwort mit optionalen Schriftreferenzen"
-              />
-              <span>
-                Deine Antwort als PNG <Download size={14} />
-              </span>
-            </a>
-            <div className="handoff-steps">
-              <div className="handoff-step">
-                <span className="step-number">1</span>
-                <div>
-                  <h3>Bild in deinen Chat einfügen</h3>
-                  <p>
-                    Kopiere das Bild und füge es in deinen bestehenden Chat ein.
-                    Alternativ kannst du es teilen oder speichern und anhängen.
-                  </p>
-                  <div className="button-row">
+          <details className="manual-handoff" open={!prepared.shared}>
+            <summary>Bild und Anweisung</summary>
+            <div className="handoff-layout">
+              <a
+                href={prepared.url}
+                download={fileName}
+                className="submission-preview"
+              >
+                <img
+                  src={prepared.url}
+                  alt="Deine handschriftliche Antwort mit optionalen Schriftreferenzen"
+                />
+                <span>
+                  Deine Antwort als PNG <Download size={14} />
+                </span>
+              </a>
+              <div className="handoff-steps">
+                <div className="handoff-step">
+                  <div>
+                    <div className="button-row">
+                      <button
+                        className="secondary"
+                        onClick={async () => {
+                          try {
+                            if (
+                              !navigator.clipboard?.write ||
+                              typeof ClipboardItem === "undefined"
+                            )
+                              throw new Error();
+                            await navigator.clipboard.write([
+                              new ClipboardItem({ "image/png": prepared.blob }),
+                            ]);
+                            notify("Bild kopiert. Im Chat einfügen.");
+                          } catch {
+                            setError(
+                              "Bildkopieren wird hier nicht unterstützt. Nutze „Teilen“ oder „Speichern“ und hänge das Bild im Chat an.",
+                            );
+                          }
+                        }}
+                      >
+                        <Copy size={15} /> Bild kopieren
+                      </button>
+                      <button
+                        className="secondary"
+                        onClick={() => {
+                          const file = new File([prepared.blob], fileName, {
+                            type: "image/png",
+                          });
+                          if (navigator.canShare?.({ files: [file] })) {
+                            navigator
+                              .share({
+                                files: [file],
+                                title: "Inkloop – Meine Lösung",
+                              })
+                              .catch((e) => {
+                                if (e.name !== "AbortError")
+                                  setError(
+                                    "Teilen fehlgeschlagen. Speichere das Bild und hänge es im Chat an.",
+                                  );
+                              });
+                          } else {
+                            download(prepared.blob, fileName);
+                            notify("Bild wird heruntergeladen.");
+                          }
+                        }}
+                      >
+                        <Upload size={15} /> Teilen
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <div className="handoff-step">
+                  <div>
                     <button
                       className="secondary"
-                      onClick={async () => {
-                        try {
-                          if (
-                            !navigator.clipboard?.write ||
-                            typeof ClipboardItem === "undefined"
-                          )
-                            throw new Error();
-                          await navigator.clipboard.write([
-                            new ClipboardItem({ "image/png": prepared.blob }),
-                          ]);
-                          notify("Bild kopiert. Im Chat einfügen.");
-                        } catch {
-                          setError(
-                            "Bildkopieren wird hier nicht unterstützt. Nutze „Teilen“ oder „Speichern“ und hänge das Bild im Chat an.",
-                          );
-                        }
-                      }}
+                      onClick={() => copyText(prepared.prompt)}
                     >
-                      <Copy size={15} /> Bild kopieren
+                      <Copy size={15} /> Anweisung kopieren
                     </button>
-                    <button
-                      className="secondary"
-                      onClick={() => {
-                        const file = new File([prepared.blob], fileName, {
-                          type: "image/png",
-                        });
-                        if (navigator.canShare?.({ files: [file] })) {
-                          navigator
-                            .share({
-                              files: [file],
-                              title: "Inkloop – Meine Lösung",
-                            })
-                            .catch((e) => {
-                              if (e.name !== "AbortError")
-                                setError(
-                                  "Teilen fehlgeschlagen. Speichere das Bild und hänge es im Chat an.",
-                                );
-                            });
-                        } else {
-                          download(prepared.blob, fileName);
-                          notify("Bild wird heruntergeladen.");
-                        }
-                      }}
-                    >
-                      <Upload size={15} /> Teilen
-                    </button>
-                    <button
-                      className="text-button small"
-                      onClick={() => download(prepared.blob, fileName)}
-                    >
-                      <Download size={14} /> Speichern
-                    </button>
+                    <details className="prompt-details">
+                      <summary>Anweisung ansehen / manuell kopieren</summary>
+                      <textarea
+                        aria-label="Anweisung für deinen Chat"
+                        readOnly
+                        value={prepared.prompt}
+                      />
+                    </details>
                   </div>
                 </div>
               </div>
-              <div className="handoff-step">
-                <span className="step-number">2</span>
-                <div>
-                  <h3>Anweisung mitgeben</h3>
-                  <p>
-                    Damit dein Chat zuerst genau liest und dir danach beim
-                    Lernen hilft.
-                  </p>
-                  <button
-                    className="secondary"
-                    onClick={() => copyText(prepared.prompt)}
-                  >
-                    <Copy size={15} /> Anweisung kopieren
-                  </button>
-                  <details className="prompt-details">
-                    <summary>Anweisung ansehen / manuell kopieren</summary>
-                    <textarea
-                      aria-label="Anweisung für deinen Chat"
-                      readOnly
-                      value={prepared.prompt}
-                    />
-                  </details>
-                </div>
-              </div>
-              <div className="handoff-step">
-                <span className="step-number">3</span>
-                <div>
-                  <h3>Im Original-Chat fortsetzen</h3>
-                  <p>
-                    Öffne deinen Chat daneben im iPad-Fenstermodus. Füge Bild
-                    und Anweisung ein und sende sie ab.
-                  </p>
-                  <a
-                    className="primary"
-                    href={chatLink(currentChatUrl, data.settings.provider)}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    {currentChatUrl
-                      ? "Deinen Chat"
-                      : data.settings.provider === "chatgpt"
-                        ? "ChatGPT"
-                        : "Claude"}{" "}
-                    öffnen <ExternalLink size={15} />
-                  </a>
-                </div>
-              </div>
             </div>
-          </div>
+          </details>
           {error && (
             <p className="inline-error" role="alert">
               {error}
             </p>
           )}
           <div className="handoff-footer">
-            <span>
-              {prepared.shared
-                ? "Alternative ohne Plugin: Bild und Anweisung manuell übertragen."
-                : "Die Erkennung erfolgt in deinem Chat. Ohne Plugin überträgst du die Antwort manuell."}
-            </span>
+            <a
+              className="primary"
+              href={chatLink(currentChatUrl, data.settings.provider)}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Chat öffnen <ExternalLink size={15} />
+            </a>
             <button
               className="secondary"
               onClick={() => {
@@ -1987,14 +1855,9 @@ export default function App() {
         </Modal>
       )}
       {sheet === "import" && (
-        <Modal
-          title="Zurück ins Lernheft."
-          eyebrow="KI-ANTWORT ÜBERNEHMEN"
-          onClose={close}
-        >
+        <Modal title="Antwort übernehmen" onClose={close}>
           <p className="muted">
-            Kopiere den JSON-Codeblock aus deinem Chat hierher. Inkloop verteilt
-            Abschrift und Feedback automatisch. Normaler Text wird als Feedback
+            Füge die Antwort aus deinem Chat ein. Klartext wird als Feedback
             gespeichert.
           </p>
           {submission && (
@@ -2028,18 +1891,14 @@ export default function App() {
         </Modal>
       )}
       {sheet === "settings" && (
-        <Modal
-          title="Ganz nach deinem Kopf."
-          eyebrow="EINSTELLUNGEN"
-          onClose={close}
-        >
+        <Modal title="Einstellungen" onClose={close}>
           {error === "restore-confirm" ? (
             <>
               <div className="info-note">
                 <Upload size={20} />
                 <span>
-                  Diese Sicherung ersetzt alle aktuellen Lernhefte und
-                  Schriftreferenzen auf diesem Gerät.
+                  Die Sicherung ersetzt deine Lernhefte und Schriftproben auf
+                  diesem Gerät.
                 </span>
               </div>
               <button className="secondary full" onClick={backup}>
@@ -2114,11 +1973,7 @@ export default function App() {
                 </label>
               </div>
               <div className="settings-section">
-                <h3>Dein Chat für {notebook.name}</h3>
-                <p className="muted">
-                  Hinterlege den Link zu einer Unterhaltung. Inkloop öffnet
-                  genau diesen Chat; dein dortiger Kontext bleibt erhalten.
-                </p>
+                <h3>Chat für {notebook.name}</h3>
                 <ChatForm
                   key={data.settings.provider}
                   initial={currentChatUrl}
@@ -2132,32 +1987,24 @@ export default function App() {
                     notify("Chat-Link gespeichert.");
                   }}
                 />
-                <p className="small muted">
-                  Bild und Anweisung fügst du selbst im Chat ein. Ein Login in
-                  Inkloop verbindet kein ChatGPT- oder Claude-Abo.
-                </p>
               </div>
               <div className="settings-section">
                 <h3>ChatGPT-Plugin</h3>
                 <p className="muted">
                   {bridgeReady
-                    ? "Die Verbindung ist erreichbar. Aktiviere Inkloop in deinem ChatGPT-Chat. Abgegebene Bilder und Antworten werden dafür privat auf dem Server bereitgestellt."
-                    : "Die Plugin-Verbindung ist momentan nicht erreichbar. Die manuelle Bildübergabe funktioniert weiterhin."}
+                    ? "Verbunden. Aktiviere Inkloop in deinem Chat."
+                    : "Derzeit getrennt. Du kannst Bilder manuell teilen."}
                 </p>
                 <p className="small muted">
-                  Bitte Chat und Lernheft mit demselben ChatGPT-Konto öffnen.
-                  Alle übrigen Seiten bleiben auf deinem iPad. Das Plugin
-                  überträgt nur bewusst abgegebene Bilder, Lernheftnamen und
-                  Chat-Antworten.
+                  Nutze dasselbe Konto. Geteilte Abgaben und Rückmeldungen
+                  liegen privat auf dem Server.
                 </p>
               </div>
               <div className="settings-section">
                 <h3>Deine Daten</h3>
                 <p className="muted">
-                  Alle Lernhefte liegen lokal in diesem Browser. Regelmäßige
-                  Sicherungen schützen vor gelöschten Website-Daten.
-                  Home-Bildschirm-App und Safari können getrennte Speicher
-                  verwenden.
+                  Lernhefte liegen lokal. Safari und die installierte App können
+                  getrennte Speicher nutzen.
                 </p>
                 <div className="button-row">
                   <button className="secondary" onClick={backup}>
@@ -2191,15 +2038,12 @@ export default function App() {
               <button className="secondary full" onClick={() => open("help")}>
                 <HelpCircle size={16} /> Installation & Hilfe
               </button>
-              <div className="version-label">
-                Inkloop 1.1 · Mit Raum für deine Gedanken.
-              </div>
             </>
           )}
         </Modal>
       )}
       {sheet === "pageMenu" && (
-        <Modal title="Diese Seite." eyebrow="SEITENOPTIONEN" onClose={close}>
+        <Modal title="Seitenoptionen" onClose={close}>
           <button
             className="menu-action"
             onClick={() => {
@@ -2271,11 +2115,7 @@ export default function App() {
             <summary>
               <Trash2 size={16} /> Seite löschen
             </summary>
-            <p>
-              Beim lokalen Löschen bleiben bereits geteilte Bilder und
-              Rückmeldungen auf dem Server verfügbar. Beide Kopien zu löschen
-              erfordert eine Verbindung.
-            </p>
+            <p>Beim lokalen Löschen bleiben geteilte Abgaben auf dem Server.</p>
             <div className="button-row">
               <button
                 className="secondary"
@@ -2297,11 +2137,7 @@ export default function App() {
         </Modal>
       )}
       {sheet === "help" && (
-        <Modal
-          title="Ein guter Anfang."
-          eyebrow="INKLOOP AUF DEINEM IPAD"
-          onClose={close}
-        >
+        <Modal title="Installation und Hilfe" onClose={close}>
           <div className="help-section">
             <span className="step-number">1</span>
             <div>

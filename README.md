@@ -1,6 +1,6 @@
 # Inkloop
 
-Ein persönliches Lernheft als iPad-PWA: mit Apple Pencil schreiben, eine Lösung bewusst abgeben und mit dem eigenen ChatGPT- oder Claude-Chat weiterlernen. Dunkles Design auf Basis der Apple-Design-Prinzipien und der Kleiderschrank-App.
+Ein persönliches Lernheft als iPad-PWA: mit Apple Pencil schreiben, eine Lösung bewusst abgeben und mit dem eigenen ChatGPT- oder Claude-Chat weiterlernen. Dunkle Oberfläche mit Lernheftübersicht und einem Lernbereich für Aufgabe, Abschrift und Feedback.
 
 ## ChatGPT-Plugin (Version 1.1)
 
@@ -19,7 +19,7 @@ Inkloop stellt ein persönliches MCP-Plugin für ChatGPT bereit. Nach Aktivierun
 
 1. In Safari öffnen, dann **Teilen → Zum Home-Bildschirm**. Ab dann möglichst immer über dieses Symbol öffnen, damit dieselben lokalen Daten verwendet werden.
 2. Optional vier Handschriftproben anlegen. Diese beschrifteten Beispiele werden auf Wunsch unter das Abgabebild gesetzt. Das ist eine Lesehilfe, kein Modelltraining und keine Genauigkeitsgarantie.
-3. Lernheft öffnen, Aufgabe einfügen, mit Pencil schreiben. Finger scrollen standardmäßig; Fingereingabe ist in den Einstellungen aktivierbar.
+3. In der Lernheftübersicht ein Heft öffnen. Inkloop öffnet dessen letzte benutzte Seite. Im Hochformat öffnet sich der Lernbereich auf Abruf, im Querformat steht er neben der Schreibfläche. Aufgabe einfügen und mit Pencil schreiben. Finger scrollen standardmäßig; Fingereingabe ist in den Einstellungen aktivierbar.
 4. **Antwort abgeben** erstellt einen unveränderlichen Stand deiner Lösung und ein PNG auf weißem Hintergrund. Bild und Anweisung kopieren/teilen und im Original-Chat einfügen. Ein gespeicherter Chat-Link führt zu derselben Unterhaltung.
 5. Die KI zuerst originalgetreu transkribieren und danach Feedback geben lassen. Ihren JSON-Codeblock unter **KI-Antwort übernehmen** einfügen. Abschrift, Feedback und nächste Aufgabe werden getrennt angezeigt. Normaler Text wird als Feedback gespeichert. Markdown, Tabellen und LaTeX werden unterstützt.
 6. Regelmäßig unter **Einstellungen → Sicherung laden** eine JSON-Sicherung herunterladen. Wiederherstellen ersetzt nach Bestätigung alle lokalen Daten. Auch Sicherungen über 40 MB können eingelesen werden.
