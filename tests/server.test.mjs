@@ -300,3 +300,44 @@ test("an empty library replaces the last published notebook index", async () => 
   const result = await rpc("inkloop_get_workspace", {}, actor);
   assert.deepEqual(JSON.parse(result.result.content[0].text).workspace, empty);
 });
+
+test("public entry keeps owner storage and ChatGPT bridge scoped to the signed-in account", async () => {
+  const hosted = {
+    BUCKET: new Bucket(),
+    INKLOOP_LEGACY_OWNER_EMAIL: "owner@example.test",
+  };
+  const visitor = { "oai-authenticated-user-email": "visitor@example.test" };
+  const owner = { "oai-authenticated-user-email": "owner@example.test" };
+  assert.equal(
+    (
+      await worker.fetch(
+        request("/api/session", "GET", undefined, null),
+        hosted,
+      )
+    ).status,
+    401,
+  );
+  const scope = async (id, headers) =>
+    (
+      await (
+        await worker.fetch(
+          request("/api/session", "GET", undefined, id, headers),
+          hosted,
+        )
+      ).json()
+    ).workspace;
+  assert.equal(await scope("site-owner", owner), "workspace");
+  const visitorScope = await scope("site-visitor", visitor);
+  assert.match(visitorScope, /^account-[a-f0-9]{64}$/);
+  assert.notEqual(visitorScope, await scope("another-visitor", visitor));
+  const bridge = (scope) =>
+    worker.fetch(
+      request("/api/bridge", "GET", undefined, "site-visitor", {
+        ...visitor,
+        "x-inkloop-workspace": scope,
+      }),
+      hosted,
+    );
+  assert.equal((await bridge("workspace")).status, 409);
+  assert.equal((await bridge(visitorScope)).status, 200);
+});

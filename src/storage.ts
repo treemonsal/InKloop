@@ -11,24 +11,28 @@ function open() {
       reject(new Error("Bitte andere Inkloop-Fenster schließen."));
   }));
 }
-export async function readStoredData(): Promise<unknown> {
+export async function readStoredData(
+  workspace = "workspace",
+): Promise<unknown> {
   const db = await open();
   return new Promise((resolve, reject) => {
     const tx = db.transaction("data", "readonly");
-    const r = tx.objectStore("data").get("workspace");
+    const r = tx.objectStore("data").get(workspace);
     r.onsuccess = () => resolve(r.result);
     r.onerror = () => reject(r.error);
   });
 }
-export async function loadData(): Promise<AppData | null> {
-  const raw = await readStoredData();
+export async function loadData(
+  workspace = "workspace",
+): Promise<AppData | null> {
+  const raw = await readStoredData(workspace);
   return raw ? validateData(raw) : null;
 }
-export async function saveData(data: AppData) {
+export async function saveData(data: AppData, workspace = "workspace") {
   const db = await open();
   return new Promise<void>((resolve, reject) => {
     const tx = db.transaction("data", "readwrite");
-    tx.objectStore("data").put(data, "workspace");
+    tx.objectStore("data").put(data, workspace);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
     tx.onabort = () => reject(tx.error || new Error("Speichern abgebrochen."));

@@ -33,6 +33,9 @@ self.addEventListener("fetch", (event) => {
   if (
     request.method !== "GET" ||
     url.origin !== self.location.origin ||
+    ["/signin-with-chatgpt", "/signout-with-chatgpt", "/callback"].includes(
+      url.pathname,
+    ) ||
     url.pathname.includes("/auth/") ||
     url.pathname.includes("/api/")
   )

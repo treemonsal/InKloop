@@ -463,11 +463,6 @@ small,
   background-image:
     linear-gradient(#ababab0c 1px, transparent 1px),
     linear-gradient(90deg, #ababab0c 1px, transparent 1px);
-  background-size: calc(100% / 30) auto;
-  background-size: 3.33333cqw 3.33333cqw;
-  container-type: inline-size;
-}
-.paper-grid {
   background-size: 24px 24px;
 }
 .paper-ruled {
@@ -1635,16 +1630,6 @@ input[type="checkbox"] {
   border-radius: 11px;
   margin-bottom: 24px;
 }
-.plugin-handoff > div {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  color: var(--accent);
-  margin-bottom: 10px;
-}
-.plugin-handoff h3 {
-  font-size: 15px;
-}
 .plugin-handoff p {
   font-size: 12px;
   line-height: 1.8;
@@ -2422,7 +2407,10 @@ textarea {
     inset 0 -1px 0 #ffffff0a;
 }
 .topbar .liquid-ui .save-state {
-  padding-inline-start: 0.4rem;
+  inline-size: 1.85rem;
+  flex: 0 0 1.85rem;
+  justify-content: center;
+  padding-inline-start: 0;
   margin: 0;
 }
 .topbar .liquid-ui .panel-toggle {

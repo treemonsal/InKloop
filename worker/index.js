@@ -148,6 +148,24 @@ const prefixFor = (request) => {
   if (!id) throw new Error("AUTH_REQUIRED");
   return "users/" + encodeURIComponent(id) + "/";
 };
+async function workspaceScope(request, env) {
+  const id = request.headers.get("oai-authenticated-user-id");
+  const email = request.headers.get("oai-authenticated-user-email");
+  if (!id || !email) throw new Error("AUTH_REQUIRED");
+  if (email.toLowerCase() === env.INKLOOP_LEGACY_OWNER_EMAIL?.toLowerCase())
+    return "workspace";
+  const bytes = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(id),
+  );
+  return (
+    "account-" +
+    Array.from(new Uint8Array(bytes), (byte) =>
+      byte.toString(16).padStart(2, "0"),
+    ).join("")
+  );
+}
+
 const assertBucket = (env) => {
   if (!env.BUCKET) throw new Error("BRIDGE_UNAVAILABLE");
   return env.BUCKET;
@@ -385,10 +403,19 @@ async function rpc(request, env) {
   }
 }
 async function api(request, env) {
-  const bucket = assertBucket(env),
-    prefix = prefixFor(request),
-    url = new URL(request.url);
+  const url = new URL(request.url);
   assertSameOrigin(request);
+  if (request.method === "GET" && url.pathname === "/api/session") {
+    return json({ workspace: await workspaceScope(request, env) });
+  }
+  const bucket = assertBucket(env),
+    prefix = prefixFor(request);
+  if (
+    env.INKLOOP_LEGACY_OWNER_EMAIL &&
+    request.headers.get("x-inkloop-workspace") !==
+      (await workspaceScope(request, env))
+  )
+    return json({ error: "WORKSPACE_CHANGED" }, 409);
   if (request.method === "GET" && url.pathname === "/api/bridge") {
     const after = url.searchParams.get("after") || "";
     if (after && !/^[0-9]{13}-[a-f0-9-]{36}\.json$/.test(after))

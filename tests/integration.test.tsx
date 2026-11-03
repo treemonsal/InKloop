@@ -65,6 +65,7 @@ Object.defineProperty(globalThis, "BroadcastChannel", {
 const no = () => {};
 const ctx = {
   clearRect: no,
+  setTransform: no,
   save: no,
   restore: no,
   beginPath: no,
@@ -426,11 +427,7 @@ test("four handwriting references replace the profile only after completion and 
           }),
         );
     });
-    assert.ok(
-      canvas.parentElement
-        ?.querySelector("svg.paper-ink g path")
-        ?.getAttribute("d"),
-    );
+    assert.ok(canvas.parentElement?.querySelector("canvas.paper-ink"));
     await click(step === 3 ? "Schriftprofil speichern" : "Nächste Probe");
   }
   await act(async () => {
@@ -641,6 +638,35 @@ test("an offline submission can be sent later without creating a duplicate", asy
     assert.equal(submissions.length, 1);
     assert.equal(submissions[0].handoff?.sent, true);
     assert.equal(submissions[0].handoff?.subject, "FRW");
+    const previousClipboard = Object.getOwnPropertyDescriptor(
+      window.navigator,
+      "clipboard",
+    );
+    let copied = "";
+    Object.defineProperty(window.navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: async (text: string) => {
+          copied = text;
+        },
+      },
+    });
+    try {
+      assert.equal(
+        document.querySelector('dialog a[href="https://chatgpt.com/"]'),
+        null,
+      );
+      await click("Auftrag kopieren");
+      assert.ok(copied.includes(local.id));
+      assert.ok(
+        document.querySelector('dialog a[href="https://chatgpt.com/"]'),
+      );
+      assert.ok(document.body.textContent?.includes("sende ihn ab"));
+    } finally {
+      if (previousClipboard)
+        Object.defineProperty(window.navigator, "clipboard", previousClipboard);
+      else Reflect.deleteProperty(window.navigator, "clipboard");
+    }
     await click("Schliessen");
     returnFeedback = true;
     await act(async () => {

@@ -33,7 +33,6 @@ import {
   Redo2,
   Settings2,
   ShieldCheck,
-  Sparkles,
   Undo2,
   Upload,
   X,
@@ -48,6 +47,10 @@ import {
   publishWorkspace,
   publishSubmission,
   deleteSharedPage,
+  browserWorkspace,
+  hostedWorkspace,
+  useBridgeWorkspace,
+  WorkspaceChanged,
   type BridgeEvent,
 } from "./bridge";
 import { useLiquidChrome } from "./useLiquidChrome";
@@ -187,6 +190,8 @@ type Sheet =
 export default function App() {
   const [data, setData] = useState<AppData | null>(null),
     [loadError, setLoadError] = useState(""),
+    [accountRequired, setAccountRequired] = useState(false),
+    [accountChanged, setAccountChanged] = useState(false),
     [saving, setSaving] = useState<"saved" | "saving" | "error">("saved"),
     [saveError, setSaveError] = useState("");
   const [sheet, setSheet] = useState<Sheet>(null),
@@ -209,6 +214,9 @@ export default function App() {
     [sampleInk, setSampleInk] = useState<Stroke[]>([]),
     [sampleUndo, setSampleUndo] = useState<Stroke[] | null>(null),
     [profileDraft, setProfileDraft] = useState<Sample[]>([]),
+    [handoffStep, setHandoffStep] = useState<"copy" | "open" | "manual">(
+      "copy",
+    ),
     [prepared, setPrepared] = useState<{
       blob: Blob;
       url: string;
@@ -233,6 +241,7 @@ export default function App() {
         .querySelector('meta[name="theme-color"]')
         ?.setAttribute("content", background);
   }, [theme]);
+  const workspace = useRef<string | null>(null);
   const current = useRef(data);
   current.current = data;
   const lastSaved = useRef<AppData | null>(null),
@@ -271,10 +280,12 @@ export default function App() {
     toastTimer.current = setTimeout(() => setToast(""), 4500);
   }, []);
   const persist = useCallback((d: AppData) => {
+    const scope = workspace.current;
+    if (!scope) return;
     setSaving("saving");
     saveQueue.current = saveQueue.current
       .catch(() => {})
-      .then(() => saveData(d))
+      .then(() => saveData(d, scope))
       .then(() => {
         lastSaved.current = d;
         if (current.current === d) setSaving("saved");
@@ -299,12 +310,19 @@ export default function App() {
   }, []);
   useEffect(() => {
     let mounted = true;
-    loadData()
-      .then((d) => {
+    browserWorkspace(true)
+      .then(async (scope) => {
         if (!mounted) return;
-        const value = d || initialData();
+        if (!scope) {
+          setAccountRequired(true);
+          return;
+        }
+        workspace.current = scope;
+        useBridgeWorkspace(scope);
+        const d = await loadData(scope);
+        if (!mounted) return;
         lastSaved.current = d;
-        setData(value);
+        setData(d || initialData());
       })
       .catch((e) => {
         if (mounted)
@@ -353,15 +371,15 @@ export default function App() {
     };
   }, [persist, externalEdit]);
   useEffect(() => {
-    if (typeof BroadcastChannel === "undefined") return;
-    const c = new BroadcastChannel("inkloop-changes");
+    if (!workspace.current || typeof BroadcastChannel === "undefined") return;
+    const c = new BroadcastChannel("inkloop-changes-" + workspace.current);
     channel.current = c;
     c.onmessage = () => setExternalEdit(true);
     return () => {
       c.close();
       channel.current = null;
     };
-  }, []);
+  }, [!!data]);
   useEffect(() => {
     if (!prepared) return;
     return () => URL.revokeObjectURL(prepared.url);
@@ -430,7 +448,7 @@ export default function App() {
     [notify],
   );
   useEffect(() => {
-    if (!data || externalEdit) return;
+    if (!data || externalEdit || accountChanged) return;
     let stopped = false,
       inFlight = false;
     const poll = async () => {
@@ -442,8 +460,11 @@ export default function App() {
           setBridgeReady(result.ok);
           applyBridgeEvents(result.events, result.cursor);
         }
-      } catch {
-        if (!stopped) setBridgeReady(false);
+      } catch (error) {
+        if (!stopped) {
+          setBridgeReady(false);
+          if (error instanceof WorkspaceChanged) setAccountChanged(true);
+        }
       } finally {
         inFlight = false;
       }
@@ -458,7 +479,7 @@ export default function App() {
       window.removeEventListener("focus", poll);
       document.removeEventListener("visibilitychange", poll);
     };
-  }, [!!data, externalEdit, applyBridgeEvents]);
+  }, [!!data, externalEdit, accountChanged, applyBridgeEvents]);
   const workspaceKey = data
     ? JSON.stringify({
         activeNotebook: data.activeNotebook,
@@ -473,12 +494,13 @@ export default function App() {
       })
     : "";
   useEffect(() => {
-    if (!bridgeReady || !current.current || externalEdit) return;
+    if (!bridgeReady || !current.current || externalEdit || accountChanged)
+      return;
     const timer = setTimeout(() => {
       if (current.current) publishWorkspace(current.current).catch(() => {});
     }, 700);
     return () => clearTimeout(timer);
-  }, [workspaceKey, bridgeReady, externalEdit]);
+  }, [workspaceKey, bridgeReady, externalEdit, accountChanged]);
   const notebook = data?.notebooks.find((n) => n.id === data.activeNotebook),
     page = notebook?.pages.find((p) => p.id === data?.activePage);
   const submission =
@@ -676,10 +698,12 @@ export default function App() {
     try {
       await navigator.clipboard.writeText(text);
       notify("In die Zwischenablage kopiert.");
+      return true;
     } catch {
       setError(
         "Kopieren nicht verfügbar. Markiere den Text und kopiere ihn manuell.",
       );
+      return false;
     }
   };
   const showHandoff = async (
@@ -740,6 +764,7 @@ export default function App() {
         }
       }
       if (current.current?.activePage === pageId) {
+        setHandoffStep("copy");
         setPrepared({
           blob,
           url: URL.createObjectURL(blob),
@@ -905,6 +930,25 @@ export default function App() {
       ),
     });
   };
+  if (accountRequired || accountChanged) {
+    return (
+      <main className="load-error">
+        <h1>Inkloop</h1>
+        <p>
+          {accountChanged
+            ? "Das ChatGPT Konto wurde gewechselt."
+            : "Melde dich mit deinem ChatGPT Konto an."}
+        </p>
+        <a
+          className="primary"
+          href={accountChanged ? "/" : "/signin-with-chatgpt?return_to=%2F"}
+          target="_top"
+        >
+          {accountChanged ? "Inkloop neu öffnen" : "Mit ChatGPT anmelden"}
+        </a>
+      </main>
+    );
+  }
   if (loadError)
     return (
       <div className="load-error">
@@ -919,7 +963,8 @@ export default function App() {
           className="secondary"
           onClick={async () => {
             try {
-              const raw = await readStoredData();
+              if (!workspace.current) return;
+              const raw = await readStoredData(workspace.current);
               if (!raw) throw new Error();
               download(
                 new Blob([JSON.stringify(raw)], { type: "application/json" }),
@@ -955,6 +1000,9 @@ export default function App() {
       ? (notebook?.chatUrl ?? "")
       : (notebook?.claudeUrl ?? "");
   const h = page ? history.current.get(page.id) : undefined;
+  const pluginPrompt = prepared
+    ? `Lies meine Inkloop-Abgabe ${prepared.submission.id} mit dem Inkloop-Plugin. Transkribiere die Handschrift originalgetreu, gib anschliessend Lernfeedback und speichere beides mit inkloop_write_response zurück. Nutze den Kontext unseres Chats.`
+    : "";
   void historyVersion;
   return (
     <>
@@ -969,7 +1017,7 @@ export default function App() {
         <main className="library">
           <header className="library-top">
             <div className="library-brand">
-              <Logo /> Inkloop <small className="library-version">V15</small>
+              <Logo /> Inkloop <small className="library-version">V16</small>
             </div>
             <div className="topbar-actions">
               <IconButton label="Deine Handschrift" onClick={startProfile}>
@@ -1316,6 +1364,7 @@ export default function App() {
                         onChange={changeInk}
                         tool={tool}
                         color={color}
+                        light={light}
                         width={width}
                         scratchToErase
                         onPageSwipe={(direction) => {
@@ -1652,6 +1701,7 @@ export default function App() {
               scratchToErase
               tool="pen"
               color={palette[0]}
+              light={light}
               width={2.5}
               paper="ruled"
               label="Handschriftprobe"
@@ -1795,26 +1845,62 @@ export default function App() {
         </Modal>
       )}
       {sheet === "submit" && prepared && (
-        <Modal title="Abgabe" onClose={close} wide>
+        <Modal
+          title={prepared.shared ? "Abgabe in ChatGPT" : "Abgabe"}
+          onClose={close}
+          wide
+        >
           {prepared.shared && (
             <div className="plugin-handoff">
-              <div>
-                <Sparkles size={20} />
-                <h3>Für ChatGPT bereit</h3>
-              </div>
-              <p>
-                Kopiere den Auftrag in deinen Chat mit aktivem Inkloop Plugin.
+              <p role="status">
+                {handoffStep === "copy"
+                  ? "Die Seite ist bereit. Kopiere den Auftrag und sende ihn in deinem Chat."
+                  : "Setze den Auftrag in deinen Chat mit Inkloop ein und sende ihn ab. Die Rückmeldung erscheint hier."}
               </p>
-              <button
-                className="primary"
-                onClick={() =>
-                  copyText(
-                    `Lies meine Inkloop-Abgabe ${prepared.submission.id} mit dem Inkloop-Plugin. Transkribiere die Handschrift originalgetreu, gib anschließend Lernfeedback und speichere beides mit inkloop_write_response zurück. Nutze den Kontext unseres bisherigen Chats.`,
-                  )
-                }
-              >
-                <Copy size={15} /> Auftrag für ChatGPT kopieren
-              </button>
+              {handoffStep === "copy" ? (
+                <button
+                  className="primary"
+                  onClick={async () => {
+                    const copied = await copyText(pluginPrompt);
+                    setHandoffStep(copied ? "open" : "manual");
+                  }}
+                >
+                  <Copy size={15} /> Auftrag kopieren
+                </button>
+              ) : (
+                <>
+                  {handoffStep === "manual" && (
+                    <textarea
+                      className="large-textarea"
+                      aria-label="Auftrag für ChatGPT"
+                      value={pluginPrompt}
+                      readOnly
+                    />
+                  )}
+                  <a
+                    className="primary"
+                    href={chatLink(notebook?.chatUrl ?? "", "chatgpt")}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    {notebook?.chatUrl
+                      ? "Verknüpften Chat öffnen"
+                      : "ChatGPT öffnen"}
+                    <ExternalLink size={15} />
+                  </a>
+                  <button
+                    className="text-button small"
+                    onClick={async () => {
+                      if (await copyText(pluginPrompt)) {
+                        setError("");
+                        setHandoffStep("open");
+                      }
+                    }}
+                  >
+                    Auftrag erneut kopieren
+                  </button>
+                </>
+              )}
             </div>
           )}
           <details className="manual-handoff" open={!prepared.shared}>
@@ -1914,25 +2000,27 @@ export default function App() {
               {error}
             </p>
           )}
-          <div className="handoff-footer">
-            <a
-              className="primary"
-              href={chatLink(currentChatUrl, data.settings.provider)}
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Chat öffnen <ExternalLink size={15} />
-            </a>
-            <button
-              className="secondary"
-              onClick={() => {
-                setPrepared(null);
-                open("import");
-              }}
-            >
-              <ArrowDownToLine size={16} /> KI-Antwort übernehmen
-            </button>
-          </div>
+          {!prepared.shared && (
+            <div className="handoff-footer">
+              <a
+                className="primary"
+                href={chatLink(currentChatUrl, data.settings.provider)}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Chat öffnen <ExternalLink size={15} />
+              </a>
+              <button
+                className="secondary"
+                onClick={() => {
+                  setPrepared(null);
+                  open("import");
+                }}
+              >
+                <ArrowDownToLine size={16} /> KI-Antwort übernehmen
+              </button>
+            </div>
+          )}
         </Modal>
       )}
       {sheet === "import" && (
@@ -2005,6 +2093,17 @@ export default function App() {
             </>
           ) : (
             <>
+              {hostedWorkspace && (
+                <div className="settings-section">
+                  <a
+                    className="secondary"
+                    href="/signout-with-chatgpt?return_to=%2F"
+                    target="_top"
+                  >
+                    Abmelden
+                  </a>
+                </div>
+              )}
               <div className="settings-section">
                 <label className="setting-row appearance-row">
                   <span>Darstellung</span>

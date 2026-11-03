@@ -7,7 +7,13 @@ import {
   type Stroke,
   type Paper,
 } from "./model";
-import { PAGE_H, PAGE_W, paintSvgStroke } from "./ink";
+import {
+  PAGE_H,
+  PAGE_W,
+  displayInkColor,
+  drawStroke,
+  paintSvgStroke,
+} from "./ink";
 type PaperTouch = Touch & { touchType?: "direct" | "stylus" };
 type Contact = {
   x: number;
@@ -26,6 +32,7 @@ type Props = {
   scratchToErase?: boolean;
   onPageSwipe?: (direction: -1 | 1) => void;
   paper: Paper;
+  light?: boolean;
   zoom?: number;
   label?: string;
   disabled?: boolean;
@@ -39,15 +46,15 @@ export default function InkCanvas({
   scratchToErase = false,
   onPageSwipe,
   paper,
+  light = false,
   zoom = 1,
   label = "Schreibfläche",
   disabled = false,
 }: Props) {
   const canvas = useRef<HTMLCanvasElement>(null),
-    committedLayer = useRef<SVGGElement>(null),
-    committedPaths = useRef(new Map<Stroke, SVGPathElement>()),
+    committedLayer = useRef<HTMLCanvasElement>(null),
     previewPath = useRef<SVGPathElement>(null),
-    painted = useRef<Stroke[] | null>(null),
+    painted = useRef<{ strokes: Stroke[]; light: boolean } | null>(null),
     live = useRef<Stroke | null>(null),
     eraserPoint = useRef<Point | null>(null),
     base = useRef(strokes),
@@ -66,22 +73,35 @@ export default function InkCanvas({
   change.current = onChange;
   const paint = () => {
     const layer = committedLayer.current;
-    if (layer && painted.current !== working.current) {
-      const owner = layer.ownerDocument;
-      const fragment = owner.createDocumentFragment();
-      const nextPaths = new Map<Stroke, SVGPathElement>();
-      for (const stroke of working.current) {
-        let path = committedPaths.current.get(stroke);
-        if (!path) {
-          path = owner.createElementNS("http://www.w3.org/2000/svg", "path");
-          paintSvgStroke(path, stroke);
+    const previous = painted.current;
+    if (
+      layer &&
+      (previous?.strokes !== working.current || previous.light !== light)
+    ) {
+      const ctx = layer.getContext("2d");
+      if (ctx) {
+        ctx.setTransform(
+          layer.width / PAGE_W,
+          0,
+          0,
+          layer.height / PAGE_H,
+          0,
+          0,
+        );
+        const existing = previous?.strokes;
+        const append =
+          previous?.light === light &&
+          existing &&
+          existing.length <= working.current.length &&
+          existing.every((stroke, index) => working.current[index] === stroke);
+        if (!append) ctx.clearRect(0, 0, PAGE_W, PAGE_H);
+        const start = append ? existing.length : 0;
+        for (let i = start; i < working.current.length; i++) {
+          const stroke = working.current[i];
+          drawStroke(ctx, stroke, false, displayInkColor(stroke.color, light));
         }
-        nextPaths.set(stroke, path);
-        fragment.append(path);
+        painted.current = { strokes: working.current, light };
       }
-      layer.replaceChildren(fragment);
-      committedPaths.current = nextPaths;
-      painted.current = working.current;
     }
     if (previewPath.current) {
       if (live.current) paintSvgStroke(previewPath.current, live.current);
@@ -92,7 +112,43 @@ export default function InkCanvas({
     base.current = strokes;
     working.current = strokes;
     paint();
-  }, [strokes]);
+  }, [strokes, light]);
+  const draw = useRef(paint);
+  draw.current = paint;
+  useLayoutEffect(() => {
+    const layer = committedLayer.current;
+    if (!layer) return;
+    const resize = () => {
+      const width = layer.getBoundingClientRect().width;
+      if (!width) return;
+      // Keep one Retina backing store with a fixed upper memory bound.
+      const density = Math.min(
+        2.25,
+        Math.max(1, (width * window.devicePixelRatio) / PAGE_W),
+      );
+      const pixels = Math.round(PAGE_W * density);
+      if (layer.width === pixels) return;
+      layer.width = pixels;
+      layer.height = Math.round(PAGE_H * density);
+      painted.current = null;
+      draw.current();
+    };
+    const observer =
+      typeof ResizeObserver !== "undefined" ? new ResizeObserver(resize) : null;
+    const restoreContext = () => {
+      painted.current = null;
+      draw.current();
+    };
+    observer?.observe(layer);
+    layer.addEventListener("contextrestored", restoreContext);
+    window.addEventListener("resize", resize);
+    resize();
+    return () => {
+      observer?.disconnect();
+      layer.removeEventListener("contextrestored", restoreContext);
+      window.removeEventListener("resize", resize);
+    };
+  }, []);
   useEffect(
     () => () => {
       cancelAnimationFrame(frame.current);
@@ -511,13 +567,19 @@ export default function InkCanvas({
       style={{ width: `${zoom * 100}%` }}
     >
       <div className="paper-margin" />
+      <canvas
+        ref={committedLayer}
+        className="paper-ink"
+        width={PAGE_W}
+        height={PAGE_H}
+        aria-hidden="true"
+      />
       <svg
         className="paper-ink"
         viewBox={`0 0 ${PAGE_W} ${PAGE_H}`}
         preserveAspectRatio="none"
         aria-hidden="true"
       >
-        <g ref={committedLayer} />
         <path ref={previewPath} />
       </svg>
       <canvas
