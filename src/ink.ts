@@ -19,6 +19,14 @@ const colorMap: Record<string, string> = {
   "#a9bed7": "#315b88",
   "#c1acd6": "#704d91",
 };
+export function displayInkColor(color: string, light: boolean) {
+  if (!light) return color;
+  if (color === "#f4f5f7") return "#141413";
+  if (color === "#a9abb2") return "#5e5d59";
+  if (color === "#3976e8") return "#963f29";
+  return colorMap[color] || color;
+}
+
 type PathWriter = Pick<
   CanvasRenderingContext2D,
   "moveTo" | "lineTo" | "quadraticCurveTo" | "closePath"
@@ -98,13 +106,12 @@ export function drawStroke(
   ctx: CanvasRenderingContext2D,
   stroke: Stroke,
   light = false,
+  color = light ? colorMap[stroke.color] || stroke.color : stroke.color,
 ) {
   ctx.save();
   ctx.lineCap = stroke.tool === "marker" ? "butt" : "round";
   ctx.lineJoin = "round";
-  ctx.strokeStyle = light
-    ? colorMap[stroke.color] || stroke.color
-    : stroke.color;
+  ctx.strokeStyle = color;
   ctx.fillStyle = ctx.strokeStyle;
   ctx.globalAlpha = stroke.tool === "marker" ? 0.28 : 1;
   ctx.lineWidth = stroke.width;
@@ -151,8 +158,10 @@ export function paintSvgStroke(path: SVGPathElement, stroke: Stroke) {
     stroke,
   );
   path.setAttribute("d", commands.join(""));
-  path.setAttribute("fill", paint === "fill" ? stroke.color : "none");
-  path.setAttribute("stroke", paint === "stroke" ? stroke.color : "none");
+  path.style.setProperty("--ink-light", displayInkColor(stroke.color, true));
+  const color = `var(--ink-display, ${stroke.color})`;
+  path.setAttribute("fill", paint === "fill" ? color : "none");
+  path.setAttribute("stroke", paint === "stroke" ? color : "none");
   path.setAttribute("stroke-width", String(stroke.width));
   path.setAttribute(
     "stroke-linecap",
@@ -260,11 +269,16 @@ export function bounds(strokes: Stroke[]) {
     }
   return { x0, y0, x1, y1 };
 }
-export function thumbnail(canvas: HTMLCanvasElement, strokes: Stroke[]) {
+export function thumbnail(
+  canvas: HTMLCanvasElement,
+  strokes: Stroke[],
+  light: boolean,
+) {
   canvas.width = 180;
   canvas.height = 240;
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
   ctx.scale(0.2, 0.2);
-  for (const s of strokes) drawStroke(ctx, s);
+  for (const s of strokes)
+    drawStroke(ctx, s, false, displayInkColor(s.color, light));
 }

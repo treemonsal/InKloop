@@ -57,6 +57,7 @@ export type AppData = {
     provider: "chatgpt" | "claude";
     touchWriting: boolean;
     includeProfile: boolean;
+    theme?: "dark" | "light";
   };
 };
 export const uid = () => crypto.randomUUID();
@@ -608,6 +609,9 @@ export function validateData(d: unknown): AppData {
     !["chatgpt", "claude"].includes(d.settings.provider as string) ||
     typeof d.settings.touchWriting !== "boolean" ||
     typeof d.settings.includeProfile !== "boolean" ||
+    (d.settings.theme !== undefined &&
+      d.settings.theme !== "dark" &&
+      d.settings.theme !== "light") ||
     !Array.isArray(d.samples) ||
     d.samples.length > 50
   )

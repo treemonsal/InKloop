@@ -1,6 +1,7 @@
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import "./style.css";
+import "./light.css";
 if ((navigator as Navigator & { standalone?: boolean }).standalone) {
   document.documentElement.classList.add("inkloop-standalone");
 }

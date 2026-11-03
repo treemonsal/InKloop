@@ -4,6 +4,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   type ReactNode,
@@ -70,7 +71,7 @@ import {
   MAX_TEXT_LENGTH,
 } from "./model";
 import { loadData, saveData, readStoredData, download } from "./storage";
-import { submissionImage, thumbnail } from "./ink";
+import { submissionImage, thumbnail, displayInkColor } from "./ink";
 
 const MarkdownText = lazy(() => import("./RichText"));
 function IconButton({
@@ -154,11 +155,11 @@ function Modal({
     </dialog>
   );
 }
-function Miniature({ strokes }: { strokes: Stroke[] }) {
+function Miniature({ strokes, light }: { strokes: Stroke[]; light: boolean }) {
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
-    if (ref.current) thumbnail(ref.current, strokes);
-  }, [strokes]);
+    if (ref.current) thumbnail(ref.current, strokes, light);
+  }, [strokes, light]);
   return <canvas ref={ref} aria-hidden="true" />;
 }
 const palette = ["#f4f5f7", "#a9abb2", "#3976e8"];
@@ -218,6 +219,20 @@ export default function App() {
     [selectedSubmission, setSelectedSubmission] = useState<string | null>(null),
     [externalEdit, setExternalEdit] = useState(false),
     [bridgeReady, setBridgeReady] = useState(false);
+  const theme = data?.settings.theme ?? "dark";
+  const light = theme === "light";
+  useLayoutEffect(() => {
+    const root = document.documentElement;
+    root.dataset.theme = theme;
+    const background = window
+      .getComputedStyle(root)
+      .getPropertyValue("--bg")
+      .trim();
+    if (background)
+      document
+        .querySelector('meta[name="theme-color"]')
+        ?.setAttribute("content", background);
+  }, [theme]);
   const current = useRef(data);
   current.current = data;
   const lastSaved = useRef<AppData | null>(null),
@@ -954,7 +969,7 @@ export default function App() {
         <main className="library">
           <header className="library-top">
             <div className="library-brand">
-              <Logo /> Inkloop <small className="library-version">V14</small>
+              <Logo /> Inkloop <small className="library-version">V15</small>
             </div>
             <div className="topbar-actions">
               <IconButton label="Deine Handschrift" onClick={startProfile}>
@@ -1027,7 +1042,10 @@ export default function App() {
                         <span
                           className={`cover-paper paper-${previewPage.paper}`}
                         >
-                          <Miniature strokes={previewPage.strokes} />
+                          <Miniature
+                            strokes={previewPage.strokes}
+                            light={light}
+                          />
                         </span>
                       </span>
                       <span className="library-name">
@@ -1086,7 +1104,7 @@ export default function App() {
                       }}
                     >
                       <span className="page-thumb">
-                        <Miniature strokes={p.strokes} />
+                        <Miniature strokes={p.strokes} light={light} />
                         <span>{String(i + 1).padStart(2, "0")}</span>
                       </span>
                       <span className="page-link-label">{p.title}</span>
@@ -1169,7 +1187,11 @@ export default function App() {
                       <button
                         key={c}
                         className={`color-button ${c === color ? "selected" : ""}`}
-                        style={{ "--ink": c } as React.CSSProperties}
+                        style={
+                          {
+                            "--ink": displayInkColor(c, light),
+                          } as React.CSSProperties
+                        }
                         aria-label={`Farbe ${c}`}
                         aria-pressed={c === color}
                         onClick={() => {
@@ -1983,6 +2005,30 @@ export default function App() {
             </>
           ) : (
             <>
+              <div className="settings-section">
+                <label className="setting-row appearance-row">
+                  <span>Darstellung</span>
+                  <select
+                    aria-label="Darstellung"
+                    value={theme}
+                    disabled={externalEdit}
+                    onChange={(event) => {
+                      const theme =
+                        event.target.value === "light" ? "light" : "dark";
+                      setData(
+                        (previous) =>
+                          previous && {
+                            ...previous,
+                            settings: { ...previous.settings, theme },
+                          },
+                      );
+                    }}
+                  >
+                    <option value="dark">Dunkel</option>
+                    <option value="light">Hell</option>
+                  </select>
+                </label>
+              </div>
               <div className="settings-section">
                 <h3>Schreiben</h3>
                 <label className="setting-row">

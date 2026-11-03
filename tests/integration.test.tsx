@@ -681,6 +681,23 @@ test("the library opens first and each notebook remembers its last page", async 
     });
     assert.equal(document.querySelector("main h1")?.textContent, "Lernhefte");
     assert.equal(document.querySelector('[data-testid="ink-canvas"]'), null);
+    assert.equal(document.documentElement.dataset.theme, "dark");
+    await click("Einstellungen");
+    const appearance = document.querySelector<HTMLSelectElement>(
+      'select[aria-label="Darstellung"]',
+    )!;
+    const changeTheme = async (value: string) => {
+      await act(async () => {
+        appearance.value = value;
+        appearance.dispatchEvent(new window.Event("change", { bubbles: true }));
+        await delay(400);
+      });
+      assert.equal(document.documentElement.dataset.theme, value);
+      assert.equal((await loadData())!.settings.theme, value);
+    };
+    await changeTheme("light");
+    await changeTheme("dark");
+    await click("Schliessen");
     await click("Mathematik");
     await click("Seiten");
     await click("Neue Seite");
