@@ -3,6 +3,17 @@ const ASSETS = /* INKLOOP_ASSETS */ {};
 const VERSION = "2026-07-28";
 const tools = [
   {
+    name: "inkloop_next_review",
+    description:
+      "Find one pending automatic Inkloop review. Returns only its submission ID, or null. Use inkloop_read_submission and inkloop_write_response with that ID.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true },
+  },
+  {
     name: "inkloop_get_workspace",
     description:
       "Read Inkloop notebook/page identifiers and the latest submitted answer for the signed-in user. Use before setting a task or reading a submission. No model or API purchase is involved.",
@@ -464,7 +475,11 @@ const reviewResultKey = (prefix, id) =>
   prefix + "review/results/" + id + ".json";
 
 async function enqueueReview(request, env, bucket, prefix, metadata) {
-  if (!env.INKLOOP_REVIEW_KEY || !env.INKLOOP_LEGACY_OWNER_EMAIL) return false;
+  if (
+    (!env.INKLOOP_REVIEW_KEY && env.INKLOOP_CLOUD_REVIEW !== "1") ||
+    !env.INKLOOP_LEGACY_OWNER_EMAIL
+  )
+    return false;
   if ((await workspaceScope(request, env)) !== "workspace") return false;
   const { id } = metadata;
   if (!(await bucket.get(reviewResultKey(prefix, id))))
@@ -521,6 +536,10 @@ async function reviewRelay(request, env) {
   const args = JSON.parse(
     new TextDecoder().decode(await limitedBody(request, 80_000)),
   );
+  return saveQueuedReview(bucket, args);
+}
+
+async function saveQueuedReview(bucket, args) {
   const id = args.submission_id;
   if (
     !validId(id) ||
@@ -612,6 +631,28 @@ async function rpc(request, env) {
       prefix = prefixFor(request),
       args = message.params?.arguments || {},
       name = message.params?.name;
+    if (name === "inkloop_next_review") {
+      let id = null;
+      if (
+        env.INKLOOP_CLOUD_REVIEW === "1" &&
+        (await workspaceScope(request, env)) === "workspace"
+      ) {
+        for await (const { value: job } of records(bucket, reviewQueue)) {
+          if (
+            job.prefix === prefix &&
+            !(await bucket.get(deletedKey(prefix, job.id)))
+          ) {
+            id = job.id;
+            break;
+          }
+        }
+      }
+      return reply({
+        content: [
+          { type: "text", text: JSON.stringify({ submission_id: id }) },
+        ],
+      });
+    }
     if (name === "inkloop_get_workspace") {
       const workspace = await read(bucket, prefix + "workspace.json");
       const latest = await latestSubmission(bucket, prefix);
@@ -666,6 +707,15 @@ async function rpc(request, env) {
         throw new Error(
           "Abgabe nicht gefunden. Lies zuerst die richtige Abgabe.",
         );
+      const job = await read(bucket, reviewKey(args.submission_id));
+      if (job?.prefix === prefix && env.INKLOOP_CLOUD_REVIEW === "1") {
+        const result = await saveQueuedReview(bucket, args);
+        return reply({
+          content: [
+            { type: "text", text: JSON.stringify(await result.json()) },
+          ],
+        });
+      }
       const result = await event(bucket, prefix, {
         type: "response",
         submissionId: args.submission_id,
@@ -868,16 +918,7 @@ async function api(request, env) {
         await bucket.delete(prefix + "latest.json");
       return json({ error: "Diese Abgabe wurde gelöscht." }, 409);
     }
-    const automatic = await signalWork(request, env, bucket, prefix, metadata);
-    const queued =
-      !automatic &&
-      (await enqueueReview(request, env, bucket, prefix, metadata));
-    return json({
-      ok: true,
-      id: metadata.id,
-      automatic: automatic || queued,
-      queued,
-    });
+    return json({ ok: true, id: metadata.id, automatic: false });
   }
   return json({ error: "Not found" }, 404);
 }

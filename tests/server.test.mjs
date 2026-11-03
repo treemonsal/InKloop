@@ -194,7 +194,7 @@ test("MCP responses and tasks return to browser through stable cursor pagination
     true,
   );
 });
-test("MCP discovery and tool list expose the four real operations", async () => {
+test("MCP discovery and tool list expose all five operations", async () => {
   for (const method of ["server/discover", "initialize", "tools/list"]) {
     const response = await worker.fetch(
       request(
@@ -208,7 +208,7 @@ test("MCP discovery and tool list expose the four real operations", async () => 
     assert.equal(response.status, 200);
     const result = await response.json();
     assert.ok(result.result);
-    if (method === "tools/list") assert.equal(result.result.tools.length, 4);
+    if (method === "tools/list") assert.equal(result.result.tools.length, 5);
   }
 });
 
@@ -440,102 +440,9 @@ test("MCP events verify a callback and deliver a submission once for the matchin
     assert.equal((await upload()).automatic, false);
     assert.equal(deliveries.length, 0);
     hosted.INKLOOP_WORK_INCLUDED_ONLY = "1";
-    assert.equal((await upload()).automatic, true);
-    assert.equal((await upload()).automatic, true);
-    assert.equal(deliveries.length, 1);
-    assert.deepEqual(deliveries[0].data, { submission_id: "ink-one" });
-    await call("events/unsubscribe", event);
     assert.equal((await upload()).automatic, false);
+    assert.equal(deliveries.length, 0);
   } finally {
     globalThis.fetch = originalFetch;
   }
-});
-
-test("the private relay reviews only owner submissions and returns one feedback event", async () => {
-  const hosted = {
-    BUCKET: new Bucket(),
-    INKLOOP_LEGACY_OWNER_EMAIL: "owner@example.test",
-    INKLOOP_REVIEW_KEY: "relay-test-secret",
-  };
-  const owner = {
-    "oai-authenticated-user-email": "owner@example.test",
-    "x-inkloop-workspace": "workspace",
-  };
-  const relay = (method, args, key = hosted.INKLOOP_REVIEW_KEY) =>
-    worker.fetch(
-      request("/api/review/relay", method, args && JSON.stringify(args), null, {
-        "x-inkloop-review-key": key,
-      }),
-      hosted,
-    );
-  const upload = async (id, actor, headers) => {
-    const body = new FormData();
-    body.set(
-      "metadata",
-      JSON.stringify({
-        id,
-        notebookId: "math",
-        pageId: "one",
-        createdAt: Date.now(),
-        subject: "Mathematik",
-        language: "de",
-        task: "2 + 2",
-        prompt: "Private.",
-      }),
-    );
-    body.set(
-      "image",
-      new Blob([Uint8Array.from([137, 80, 78, 71])], { type: "image/png" }),
-      "answer.png",
-    );
-    return (
-      await worker.fetch(
-        request("/api/bridge/submission", "POST", body, actor, headers),
-        hosted,
-      )
-    ).json();
-  };
-  assert.equal((await relay("GET", undefined, "wrong")).status, 401);
-  assert.equal((await relay("GET")).status, 204);
-  const visitorEmail = "visitor@example.test";
-  const visitorId = "visitor";
-  const { createHash } = await import("node:crypto");
-  const visitorScope =
-    "account-" + createHash("sha256").update(visitorId).digest("hex");
-  assert.equal(
-    (
-      await upload("visitor-note", visitorId, {
-        "oai-authenticated-user-email": visitorEmail,
-        "x-inkloop-workspace": visitorScope,
-      })
-    ).queued,
-    false,
-  );
-  assert.equal((await relay("GET")).status, 204);
-  assert.equal((await upload("owner-note", "owner", owner)).queued, true);
-  const job = await (await relay("GET")).formData();
-  assert.deepEqual(JSON.parse(job.get("task")), {
-    id: "owner-note",
-    task: "2 + 2",
-    subject: "Mathematik",
-    language: "de",
-  });
-  assert.equal(job.get("image").type, "image/png");
-  const answer = {
-    submission_id: "owner-note",
-    transcription: "4",
-    feedback: "Richtig.",
-  };
-  assert.equal((await (await relay("POST", answer)).json()).saved, true);
-  await relay("POST", answer);
-  await upload("owner-note", "owner", owner);
-  assert.equal((await relay("GET")).status, 204);
-  const updates = await (
-    await worker.fetch(
-      request("/api/bridge", "GET", undefined, "owner", owner),
-      hosted,
-    )
-  ).json();
-  assert.equal(updates.events.length, 1);
-  assert.equal(updates.events[0].feedback, "Richtig.");
 });

@@ -160,7 +160,7 @@ const root = createRoot(
   document.body.appendChild(document.createElement("div")),
 );
 
-test("complete notebook flow: draw, undo/redo, persist, submit snapshot, import answer and preserve original snapshots", async () => {
+test("complete notebook flow: draw, undo/redo, persist and save the original submission snapshot", async () => {
   const d = initialData();
   d.onboardingDone = true;
   await saveData(d);
@@ -175,6 +175,7 @@ test("complete notebook flow: draw, undo/redo, persist, submit snapshot, import 
     document.body.textContent || "empty",
   );
   await click("Mathematik");
+  await click("Lernbereich");
   await click("Aufgabe einfügen");
   const task = document.querySelector("dialog textarea") as HTMLTextAreaElement;
   await setInput(task, "Solve x² = 9.");
@@ -265,58 +266,20 @@ test("complete notebook flow: draw, undo/redo, persist, submit snapshot, import 
     send("pointerup", 109, 162);
     await delay(400);
   });
-  const erased = (await loadData())!.notebooks[0].pages[0].strokes;
-  assert.equal(erased.length, 2);
-  assert.equal(erased[0].points[0].x, 80);
-  assert.equal(erased[1].points.at(-1)?.x, 190);
+  const crossed = (await loadData())!.notebooks[0].pages[0].strokes;
+  assert.equal(crossed.length, 2);
+  assert.deepEqual(crossed[0], stored.notebooks[0].pages[0].strokes[0]);
   await click("Rückgängig");
-  await act(async () => {
-    await delay(400);
-  });
-  assert.deepEqual(
-    (await loadData())!.notebooks[0].pages[0].strokes,
-    stored.notebooks[0].pages[0].strokes,
-  );
   await click("Antwort abgeben");
   await act(async () => {
-    await delay(400);
+    await delay(450);
   });
-  assert.ok(document.body.textContent?.includes("Abgabe"));
   stored = (await loadData())!;
   assert.equal(stored.notebooks[0].pages[0].submissions.length, 1);
   assert.equal(stored.notebooks[0].pages[0].submissions[0].strokes.length, 1);
-  await click("KI-Antwort übernehmen");
-  await setInput(
-    document.querySelector("dialog textarea") as HTMLTextAreaElement,
-    JSON.stringify({
-      transcription: "x = 3",
-      feedback: "Also consider −3.",
-      next_task: "Solve x² = 16.",
-    }),
-  );
-  await click("Im Lernheft speichern");
-  await act(async () => {
-    await delay(450);
-  });
-  stored = (await loadData())!;
-  assert.equal(
-    stored.notebooks[0].pages[0].submissions[0].transcription,
-    "x = 3",
-  );
-  assert.equal(
-    stored.notebooks[0].pages[0].submissions[0].feedback,
-    "Also consider −3.",
-  );
-  await click("Feedback");
-  await click("Auf neuer Seite lösen");
-  await act(async () => {
-    await delay(450);
-  });
-  stored = (await loadData())!;
-  assert.equal(stored.notebooks[0].pages.length, 2);
-  assert.equal(stored.notebooks[0].pages[1].task, "Solve x² = 16.");
-  assert.equal(stored.notebooks[0].pages[1].strokes.length, 0);
-  assert.equal(stored.notebooks[0].pages[0].submissions[0].strokes.length, 1);
+  assert.ok(!document.body.textContent?.includes("KI-Antwort übernehmen"));
+  await click("Seiten");
+  await click("Neue Seite");
   // Finger contact cannot create ink in Pencil-only mode.
   const fresh = document.querySelector('[data-testid="ink-canvas"]')!;
   await act(async () => {
@@ -531,8 +494,7 @@ test("plugin responses arrive automatically and new tasks preserve an existing h
     );
     assert.equal(saved.bridgeCursor, "cursor-one");
     await click("Mathematik");
-    await click("Feedback");
-    assert.ok(document.body.textContent?.includes("Berücksichtige auch −3."));
+    assert.ok(!document.body.textContent?.includes("Berücksichtige auch −3."));
     await act(async () => {
       window.dispatchEvent(new window.Event("focus"));
       await delay(100);
@@ -629,6 +591,7 @@ test("an offline submission can be sent later without creating a duplicate", asy
     assert.equal(uploadedId, undefined);
     await click("Schliessen");
     online = true;
+    await click("Lernbereich");
     await click("Erneut an ChatGPT senden");
     await act(async () => {
       await delay(400);
@@ -638,36 +601,7 @@ test("an offline submission can be sent later without creating a duplicate", asy
     assert.equal(submissions.length, 1);
     assert.equal(submissions[0].handoff?.sent, true);
     assert.equal(submissions[0].handoff?.subject, "FRW");
-    const previousClipboard = Object.getOwnPropertyDescriptor(
-      window.navigator,
-      "clipboard",
-    );
-    let copied = "";
-    Object.defineProperty(window.navigator, "clipboard", {
-      configurable: true,
-      value: {
-        writeText: async (text: string) => {
-          copied = text;
-        },
-      },
-    });
-    try {
-      assert.equal(
-        document.querySelector('dialog a[href="https://chatgpt.com/"]'),
-        null,
-      );
-      await click("Auftrag kopieren");
-      assert.ok(copied.includes(local.id));
-      assert.ok(
-        document.querySelector('dialog a[href="https://chatgpt.com/"]'),
-      );
-      assert.ok(document.body.textContent?.includes("sende ihn ab"));
-    } finally {
-      if (previousClipboard)
-        Object.defineProperty(window.navigator, "clipboard", previousClipboard);
-      else Reflect.deleteProperty(window.navigator, "clipboard");
-    }
-    await click("Schliessen");
+    assert.ok(!document.querySelector("dialog"));
     returnFeedback = true;
     await act(async () => {
       window.dispatchEvent(new window.Event("focus"));

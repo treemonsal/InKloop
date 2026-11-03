@@ -10,7 +10,6 @@ import {
   type ReactNode,
 } from "react";
 import {
-  ArrowDownToLine,
   ArrowRight,
   ArrowUpRight,
   Check,
@@ -69,7 +68,6 @@ import {
   chatLink,
   buildPrompt,
   parseBackup,
-  parseResponse,
   receiveTask,
   MAX_TEXT_LENGTH,
 } from "./model";
@@ -181,7 +179,6 @@ type Sheet =
   | "newNotebook"
   | "task"
   | "submit"
-  | "import"
   | "help"
   | "pageMenu"
   | "deleteNotebook"
@@ -198,8 +195,7 @@ export default function App() {
     [inLibrary, setInLibrary] = useState(true),
     [sidebar, setSidebar] = useState(false),
     [compact, setCompact] = useState(prefersCompactLayout),
-    [panelOpen, setPanelOpen] = useState(() => !prefersCompactLayout()),
-    [tab, setTab] = useState<"task" | "text" | "feedback">("task"),
+    [panelOpen, setPanelOpen] = useState(false),
     [tool, setTool] = useState<Tool>("pen"),
     [color, setColor] = useState(palette[0]),
     [width, setWidth] = useState(2.5),
@@ -303,7 +299,7 @@ export default function App() {
     const query = window.matchMedia(compactLayout);
     const update = () => {
       setCompact(query.matches);
-      setPanelOpen(!query.matches);
+      setPanelOpen(false);
     };
     query.addEventListener("change", update);
     return () => query.removeEventListener("change", update);
@@ -387,7 +383,6 @@ export default function App() {
   const applyBridgeEvents = useCallback(
     (events: BridgeEvent[], cursor: string) => {
       if (!events.length) return;
-      const before = current.current;
       setData((old) => {
         if (!old || old.bridgeCursor === cursor) return old;
         let next = old;
@@ -431,19 +426,6 @@ export default function App() {
         }
         return { ...next, bridgeCursor: cursor };
       });
-      const activeResponse = events.find(
-        (e) => e.type === "response" && e.pageId === before?.activePage,
-      );
-      if (activeResponse) {
-        setSelectedSubmission(activeResponse.submissionId || null);
-        setTab("feedback");
-        if (!prefersCompactLayout()) setPanelOpen(true);
-      }
-      notify(
-        events.some((e) => e.type === "response")
-          ? "Antwort aus deinem ChatGPT-Chat empfangen."
-          : "Neue Aufgabe aus deinem ChatGPT-Chat empfangen.",
-      );
     },
     [notify],
   );
@@ -616,9 +598,8 @@ export default function App() {
     });
     setSelectedSubmission(null);
     setZoom(1);
-    setTab("task");
     setSidebar(false);
-    setPanelOpen(!prefersCompactLayout());
+    setPanelOpen(false);
     setInLibrary(false);
   };
   const openLibrary = () => {
@@ -725,19 +706,9 @@ export default function App() {
       const blob = await submissionImage(source, submission, handoff.samples);
       const prompt = buildPrompt(source, submission, handoff.samples.length);
       let shared = handoff.sent;
-      let automatic = false;
-      let queued = false;
       if (send) {
         try {
-          const result = await publishSubmission(
-            source,
-            pageId,
-            submission,
-            blob,
-            prompt,
-          );
-          automatic = result.automatic === true;
-          queued = result.queued === true;
+          await publishSubmission(source, pageId, submission, blob, prompt);
           shared = true;
           setData(
             (d) =>
@@ -773,15 +744,8 @@ export default function App() {
           );
         }
       }
-      if (automatic && current.current?.activePage === pageId) {
-        setSelectedSubmission(submission.id);
-        setPanelOpen(true);
-        setTab("feedback");
-        notify(
-          queued
-            ? "Abgegeben. Das Feedback erscheint hier."
-            : "Abgegeben. ChatGPT wertet die Seite aus.",
-        );
+      if (send && shared) {
+        notify("Abgabe gespeichert.");
         return;
       }
       if (current.current?.activePage === pageId) {
@@ -893,35 +857,6 @@ export default function App() {
       setBusy(false);
     }
   };
-  const applyResponse = () => {
-    if (!page || !draft.trim()) return;
-    try {
-      const result = parseResponse(draft);
-      if (submission) {
-        patchPage({
-          submissions: page.submissions.map((s) =>
-            s.id === submission.id ? { ...s, ...result } : s,
-          ),
-        });
-      } else {
-        const s: Submission = {
-          id: uid(),
-          createdAt: Date.now(),
-          strokes: structuredClone(page.strokes),
-          task: page.task,
-          ...result,
-        };
-        patchPage({ submissions: [...page.submissions, s] });
-        setSelectedSubmission(s.id);
-      }
-      setTab(result.transcription ? "text" : "feedback");
-      setPanelOpen(true);
-      close();
-      notify("Antwort im Lernheft gespeichert.");
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  };
   const backup = () => {
     if (!data) return;
     download(
@@ -943,14 +878,6 @@ export default function App() {
     if (importFile.current) importFile.current.value = "";
   };
   const fileName = `inkloop-${notebook?.subject.toLowerCase().replace(/[^a-z0-9]+/g, "-") || "antwort"}.png`;
-  const editSubmission = (patch: Partial<Submission>) => {
-    if (!page || !submission) return;
-    patchPage({
-      submissions: page.submissions.map((s) =>
-        s.id === submission.id ? { ...s, ...patch } : s,
-      ),
-    });
-  };
   if (accountRequired || accountChanged) {
     return (
       <main className="load-error">
@@ -1038,7 +965,7 @@ export default function App() {
         <main className="library">
           <header className="library-top">
             <div className="library-brand">
-              <Logo /> Inkloop <small className="library-version">V18</small>
+              <Logo /> Inkloop <small className="library-version">V19</small>
             </div>
             <div className="topbar-actions">
               <IconButton label="Deine Handschrift" onClick={startProfile}>
@@ -1387,7 +1314,6 @@ export default function App() {
                         color={color}
                         light={light}
                         width={width}
-                        scratchToErase
                         onPageSwipe={(direction) => {
                           const index = notebook.pages.findIndex(
                             (p) => p.id === page.id,
@@ -1426,168 +1352,28 @@ export default function App() {
                     aria-hidden={!panelOpen}
                     inert={sidebar || !panelOpen}
                   >
-                    <div
-                      className="panel-tabs"
-                      role="tablist"
-                      aria-label="Lernansicht"
-                      onKeyDown={(e) => {
-                        if (
-                          !["ArrowLeft", "ArrowRight", "Home", "End"].includes(
-                            e.key,
-                          )
-                        )
-                          return;
-                        e.preventDefault();
-                        const tabs = ["task", "text", "feedback"] as const;
-                        const i = tabs.indexOf(tab);
-                        const next =
-                          tabs[
-                            e.key === "Home"
-                              ? 0
-                              : e.key === "End"
-                                ? 2
-                                : (i + (e.key === "ArrowRight" ? 1 : 2)) % 3
-                          ];
-                        setTab(next);
-                        document.getElementById(`tab-${next}`)?.focus();
-                      }}
-                    >
-                      {(["task", "text", "feedback"] as const).map((t, i) => (
-                        <button
-                          key={t}
-                          id={`tab-${t}`}
-                          role="tab"
-                          aria-selected={tab === t}
-                          tabIndex={tab === t ? 0 : -1}
-                          aria-controls="learning-content"
-                          className={tab === t ? "selected" : ""}
-                          onClick={() => setTab(t)}
-                        >
-                          {["Aufgabe", "Abschrift", "Feedback"][i]}
-                          {((t === "task" && page.task) ||
-                            (t === "text" && submission?.transcription) ||
-                            (t === "feedback" && submission?.feedback)) && (
-                            <span />
-                          )}
-                        </button>
-                      ))}
-                    </div>
-                    <div
-                      className="panel-content"
-                      id="learning-content"
-                      role="tabpanel"
-                      aria-labelledby={`tab-${tab}`}
-                    >
-                      {tab === "task" &&
-                        (page.task ? (
-                          <div className="task-content">
-                            <RichText text={page.task} />
-                            <button
-                              className="text-button small"
-                              onClick={() => open("task", page.task)}
-                            >
-                              <PenLine size={14} /> Bearbeiten
-                            </button>
-                          </div>
-                        ) : (
-                          <div className="panel-empty">
-                            <p>Keine Aufgabe</p>
-                            <button
-                              className="secondary"
-                              onClick={() => open("task")}
-                            >
-                              <Plus size={16} /> Aufgabe einfügen
-                            </button>
-                          </div>
-                        ))}
-                      {tab === "text" &&
-                        (submission?.transcription ? (
-                          <>
-                            <div className="section-label">
-                              Abschrift{" "}
-                              <button
-                                aria-label="Abschrift kopieren"
-                                onClick={() =>
-                                  copyText(submission.transcription)
-                                }
-                              >
-                                <Copy size={14} />
-                              </button>
-                            </div>
-                            <RichText text={submission.transcription} />
-                            <details className="edit-details">
-                              <summary>Abschrift korrigieren</summary>
-                              <textarea
-                                aria-label="Abschrift korrigieren"
-                                maxLength={MAX_TEXT_LENGTH}
-                                value={submission.transcription}
-                                onChange={(e) =>
-                                  editSubmission({
-                                    transcription: e.target.value.slice(
-                                      0,
-                                      MAX_TEXT_LENGTH,
-                                    ),
-                                  })
-                                }
-                              />
-                              <small>
-                                Deine Korrektur wird lokal gespeichert.
-                              </small>
-                            </details>
-                          </>
-                        ) : (
-                          <div className="panel-empty">
-                            <p>Keine Abschrift</p>
-                            <button
-                              className="secondary"
-                              onClick={() => open("import")}
-                            >
-                              <ArrowDownToLine size={16} /> KI-Antwort
-                              übernehmen
-                            </button>
-                          </div>
-                        ))}
-                      {tab === "feedback" &&
-                        (submission?.feedback ? (
-                          <>
-                            <div className="section-label">
-                              Feedback{" "}
-                              <button
-                                aria-label="Feedback kopieren"
-                                onClick={() => copyText(submission.feedback)}
-                              >
-                                <Copy size={14} />
-                              </button>
-                            </div>
-                            <RichText text={submission.feedback} />
-                            {submission.nextTask && (
-                              <div className="next-task">
-                                <span className="eyebrow">Nächste Aufgabe</span>
-                                <RichText text={submission.nextTask} />
-                                <button
-                                  className="secondary"
-                                  onClick={() => {
-                                    addPage(submission.nextTask);
-                                    setTab("task");
-                                  }}
-                                >
-                                  <Plus size={16} /> Auf neuer Seite lösen
-                                </button>
-                              </div>
-                            )}
-                          </>
-                        ) : (
-                          <div className="panel-empty">
-                            <p>Kein Feedback</p>
-                            <button
-                              className="secondary"
-                              onClick={() => open("import")}
-                            >
-                              <ArrowDownToLine size={16} /> KI-Antwort
-                              übernehmen
-                            </button>
-                          </div>
-                        ))}
+                    <div className="panel-content" id="learning-content">
+                      {page.task ? (
+                        <div className="task-content">
+                          <RichText text={page.task} />
+                          <button
+                            className="text-button small"
+                            onClick={() => open("task", page.task)}
+                          >
+                            <PenLine size={14} /> Bearbeiten
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="panel-empty">
+                          <p>Keine Aufgabe</p>
+                          <button
+                            className="secondary"
+                            onClick={() => open("task")}
+                          >
+                            <Plus size={16} /> Aufgabe einfügen
+                          </button>
+                        </div>
+                      )}
                       {page.submissions.length > 0 && (
                         <div className="submission-history">
                           <label htmlFor="submission-select">
@@ -1610,7 +1396,6 @@ export default function App() {
                                     minute: "2-digit",
                                   },
                                 )}
-                                {s.feedback ? " · mit Antwort" : ""}
                               </option>
                             ))}
                           </select>
@@ -1649,13 +1434,6 @@ export default function App() {
                                 </button>
                               </>
                             )}
-                          <button
-                            className="text-button small"
-                            onClick={() => open("import")}
-                          >
-                            <ArrowDownToLine size={14} /> Antwort zu dieser
-                            Abgabe übernehmen
-                          </button>
                         </div>
                       )}
                     </div>
@@ -1719,7 +1497,6 @@ export default function App() {
                 setSampleUndo(sampleInk);
                 setSampleInk(ink);
               }}
-              scratchToErase
               tool="pen"
               color={palette[0]}
               light={light}
@@ -1794,10 +1571,9 @@ export default function App() {
                 activePage: n.pages[0].id,
               });
               setInLibrary(false);
-              setTab("task");
               setSelectedSubmission(null);
               setZoom(1);
-              setPanelOpen(!prefersCompactLayout());
+              setPanelOpen(false);
               close();
             }}
           >
@@ -1857,7 +1633,6 @@ export default function App() {
             className="primary full"
             onClick={() => {
               patchPage({ task: draft.trim() });
-              setTab("task");
               close();
             }}
           >
@@ -2031,53 +1806,8 @@ export default function App() {
               >
                 Chat öffnen <ExternalLink size={15} />
               </a>
-              <button
-                className="secondary"
-                onClick={() => {
-                  setPrepared(null);
-                  open("import");
-                }}
-              >
-                <ArrowDownToLine size={16} /> KI-Antwort übernehmen
-              </button>
             </div>
           )}
-        </Modal>
-      )}
-      {sheet === "import" && (
-        <Modal title="Antwort übernehmen" onClose={close}>
-          <p className="muted">
-            Füge die Antwort aus deinem Chat ein. Klartext wird als Feedback
-            gespeichert.
-          </p>
-          {submission && (
-            <div className="import-target">
-              Zu Abgabe vom{" "}
-              {new Date(submission.createdAt).toLocaleString("de-CH", {
-                dateStyle: "short",
-                timeStyle: "short",
-              })}
-            </div>
-          )}
-          <textarea
-            autoFocus
-            className="large-textarea"
-            aria-label="KI-Antwort"
-            placeholder={
-              '{"transcription": "…", "feedback": "…", "next_task": "…"}'
-            }
-            value={draft}
-            maxLength={MAX_TEXT_LENGTH}
-            onChange={(e) => setDraft(e.target.value)}
-          />
-          {error && <p className="inline-error">{error}</p>}
-          <button
-            className="primary full"
-            disabled={!draft.trim()}
-            onClick={applyResponse}
-          >
-            <ArrowDownToLine size={17} /> Im Lernheft speichern
-          </button>
         </Modal>
       )}
       {sheet === "settings" && (
