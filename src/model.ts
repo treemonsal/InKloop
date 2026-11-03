@@ -342,7 +342,7 @@ export function eraseScratch(
   points: Point[],
   duration: number,
 ) {
-  if (!strokes.length || points.length < 5 || duration > 1100) return strokes;
+  if (!strokes.length || points.length < 4 || duration > 1550) return strokes;
 
   let left = Infinity,
     right = -Infinity,
@@ -356,7 +356,7 @@ export function eraseScratch(
   }
   const width = right - left;
   const height = bottom - top;
-  if (width < 28 || width > 420 || height > Math.min(48, width * 0.55))
+  if (width < 18 || width > 420 || height > Math.min(42, width * 0.75))
     return strokes;
 
   // Count full trips across the scratch, ignoring small turns in the middle.
@@ -370,7 +370,7 @@ export function eraseScratch(
       side = edge;
     }
   }
-  if (passes < 4) return strokes;
+  if (passes < 3) return strokes;
 
   const y = (top + bottom) / 2;
   const radius = Math.min(width / 2, height / 2 + 7);

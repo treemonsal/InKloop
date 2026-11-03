@@ -437,6 +437,7 @@ small,
   border-radius: 50%;
 }
 .paper-scroll {
+  touch-action: none;
   overflow: auto;
   min-height: 200px;
   flex: 1;
@@ -868,7 +869,8 @@ textarea::placeholder {
 }
 .sample-surface {
   height: clamp(165px, 33dvh, 260px);
-  overflow: hidden;
+  overflow: auto;
+  overscroll-behavior: contain;
   touch-action: none;
   border: 1px solid var(--border);
   border-radius: 9px;
@@ -1658,11 +1660,22 @@ input[type="checkbox"] {
 
 /* Library and writing workspace */
 :root {
-  --header: calc(3.75rem + env(safe-area-inset-top));
+  --top-clearance: env(safe-area-inset-top, 0px);
+  --header: calc(3.75rem + var(--top-clearance));
   --surface-paper: #19191c;
   --sidebar: 0px;
   --border: #ffffff1a;
   font-optical-sizing: auto;
+}
+
+:root.inkloop-standalone {
+  --top-clearance: max(26px, env(safe-area-inset-top, 0px));
+}
+
+@media (display-mode: standalone) {
+  :root {
+    --top-clearance: max(26px, env(safe-area-inset-top, 0px));
+  }
 }
 
 .visually-hidden {
@@ -1682,7 +1695,7 @@ input[type="checkbox"] {
 .library-top {
   max-width: 72rem;
   min-height: var(--header);
-  padding-top: env(safe-area-inset-top);
+  padding-top: var(--top-clearance);
   margin-inline: auto;
   display: flex;
   align-items: center;
@@ -2250,7 +2263,7 @@ input[type="checkbox"] {
   grid-template-columns: minmax(0, max-content) minmax(0, max-content) 1fr;
   height: var(--header);
   gap: 0.4rem clamp(0.45rem, 1.4vw, 1.2rem);
-  padding-top: env(safe-area-inset-top);
+  padding-top: var(--top-clearance);
   background: var(--bg);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
@@ -2338,7 +2351,7 @@ input[type="checkbox"] {
   .app-main,
   .sidebar.visible,
   .sidebar-scrim {
-    --header: calc(7.35rem + env(safe-area-inset-top));
+    --header: calc(7.35rem + var(--top-clearance));
   }
   .app-main .topbar {
     grid-template-columns: minmax(0, 1fr) auto;

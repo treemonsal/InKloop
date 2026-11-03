@@ -194,6 +194,41 @@ test("complete notebook flow: draw, undo/redo, persist, submit snapshot, import 
         bubbles: true,
       }),
     );
+  const finger = (type: string, id: number, x: number, y: number) =>
+    canvas.dispatchEvent(
+      new window.PointerEvent(type, {
+        pointerId: id,
+        pointerType: "touch",
+        button: 0,
+        clientX: x,
+        clientY: y,
+        pressure: 0.5,
+        bubbles: true,
+      }),
+    );
+  const paperScroll = canvas.closest<HTMLElement>(".paper-scroll")!;
+  assert.equal((canvas as HTMLCanvasElement).style.touchAction, "none");
+  await act(async () => {
+    finger("pointerdown", 5, 100, 180);
+    finger("pointermove", 5, 100, 176);
+    finger("pointerdown", 6, 160, 180);
+    finger("pointermove", 5, 100, 140);
+    finger("pointermove", 6, 160, 140);
+    finger("pointerup", 5, 100, 140);
+    finger("pointermove", 6, 160, 130);
+    finger("pointerup", 6, 160, 130);
+    await delay(400);
+  });
+  assert.ok(paperScroll.scrollTop > 0);
+  assert.equal((await loadData())!.notebooks[0].pages[0].strokes.length, 0);
+  await act(async () => {
+    finger("pointerdown", 5, 100, 180);
+    finger("pointermove", 5, 106, 184);
+    finger("pointerup", 5, 112, 187);
+    await delay(400);
+  });
+  assert.equal((await loadData())!.notebooks[0].pages[0].strokes.length, 1);
+  await click("Rückgängig");
   await click("Textmarker");
   await act(async () => {
     send("pointerdown", 60, 100);

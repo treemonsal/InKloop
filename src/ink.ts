@@ -33,56 +33,38 @@ function traceCurve(ctx: CanvasRenderingContext2D, points: Point[]) {
   ctx.lineTo(end.x, end.y);
 }
 
-function penOutline(
+function penRadius(point: Point, width: number) {
+  return (width * (0.7 + 0.65 * point.p)) / 2;
+}
+
+function fillPenStroke(
   ctx: CanvasRenderingContext2D,
   points: Point[],
   width: number,
 ) {
-  const sides = points.map((point, i) => {
-    const before = points[Math.max(0, i - 1)],
-      after = points[Math.min(points.length - 1, i + 1)];
-    const dx = after.x - before.x,
-      dy = after.y - before.y;
-    const angle = Math.atan2(dy, dx) + Math.PI / 2;
-    const radius = (width * (0.55 + 0.8 * point.p)) / 2;
-    const x = Math.cos(angle) * radius,
-      y = Math.sin(angle) * radius;
-    return {
-      point,
-      angle,
-      radius,
-      outer: { ...point, x: point.x + x, y: point.y + y },
-      inner: { ...point, x: point.x - x, y: point.y - y },
-    };
-  });
-  const first = sides[0],
-    last = sides.at(-1)!;
-  ctx.moveTo(first.outer.x, first.outer.y);
-  traceCurve(
-    ctx,
-    sides.map((side) => side.outer),
-  );
-  ctx.arc(
-    last.point.x,
-    last.point.y,
-    last.radius,
-    last.angle,
-    last.angle - Math.PI,
-    true,
-  );
-  traceCurve(
-    ctx,
-    sides.reverse().map((side) => side.inner),
-  );
-  ctx.arc(
-    first.point.x,
-    first.point.y,
-    first.radius,
-    first.angle - Math.PI,
-    first.angle - 2 * Math.PI,
-    true,
-  );
-  ctx.closePath();
+  // Rounded discs and the connections between them share the same winding.
+  // Even a tight curl can then overlap itself without cutting a hole in the ink.
+  for (let i = 0; i < points.length; i++) {
+    const point = points[i];
+    const radius = penRadius(point, width);
+    ctx.moveTo(point.x + radius, point.y);
+    ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+
+    const next = points[i + 1];
+    if (!next) break;
+    const dx = next.x - point.x,
+      dy = next.y - point.y;
+    const length = Math.hypot(dx, dy);
+    if (!length) continue;
+    const nx = -dy / length,
+      ny = dx / length;
+    const nextRadius = penRadius(next, width);
+    ctx.moveTo(point.x + nx * radius, point.y + ny * radius);
+    ctx.lineTo(point.x - nx * radius, point.y - ny * radius);
+    ctx.lineTo(next.x - nx * nextRadius, next.y - ny * nextRadius);
+    ctx.lineTo(next.x + nx * nextRadius, next.y + ny * nextRadius);
+    ctx.closePath();
+  }
   ctx.fill();
 }
 
@@ -106,11 +88,12 @@ export function drawStroke(
 
   const first = points[0];
   if (points.length === 1) {
-    const pressure = stroke.tool === "pen" ? 0.55 + 0.8 * first.p : 1;
-    ctx.arc(first.x, first.y, (stroke.width * pressure) / 2, 0, Math.PI * 2);
+    const radius =
+      stroke.tool === "pen" ? penRadius(first, stroke.width) : stroke.width / 2;
+    ctx.arc(first.x, first.y, radius, 0, Math.PI * 2);
     ctx.fill();
   } else if (stroke.tool === "pen") {
-    penOutline(ctx, points, stroke.width);
+    fillPenStroke(ctx, points, stroke.width);
   } else {
     ctx.moveTo(first.x, first.y);
     if (stroke.tool === "marker" && !stroke.flattened) {

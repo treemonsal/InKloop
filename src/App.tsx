@@ -207,7 +207,6 @@ export default function App() {
     [profileStep, setProfileStep] = useState(0),
     [sampleInk, setSampleInk] = useState<Stroke[]>([]),
     [profileDraft, setProfileDraft] = useState<Sample[]>([]),
-    [profileFinger, setProfileFinger] = useState(false),
     [prepared, setPrepared] = useState<{
       blob: Blob;
       url: string;
@@ -620,7 +619,6 @@ export default function App() {
     setProfileStep(0);
     setSampleInk([]);
     setProfileDraft([]);
-    setProfileFinger(data?.settings.touchWriting || false);
     open("profile");
   };
   const navigatePage = (id: string) => {
@@ -954,7 +952,7 @@ export default function App() {
         <main className="library">
           <header className="library-top">
             <div className="library-brand">
-              <Logo /> Inkloop <small className="library-version">V10</small>
+              <Logo /> Inkloop <small className="library-version">V11</small>
             </div>
             <div className="topbar-actions">
               <IconButton label="Deine Handschrift" onClick={startProfile}>
@@ -1295,7 +1293,6 @@ export default function App() {
                         tool={tool}
                         color={color}
                         width={width}
-                        touchWriting={data.settings.touchWriting}
                         scratchToErase
                         paper={page.paper}
                         zoom={zoom}
@@ -1617,21 +1614,11 @@ export default function App() {
               tool="pen"
               color={palette[0]}
               width={2.5}
-              touchWriting={profileFinger}
-              lockTouchScroll
               paper="ruled"
               label="Handschriftprobe"
             />
           </div>
           <div className="sample-actions">
-            <label>
-              <input
-                type="checkbox"
-                checked={profileFinger}
-                onChange={(e) => setProfileFinger(e.target.checked)}
-              />{" "}
-              Mit Finger schreiben
-            </label>
             <button
               className="text-button small"
               onClick={() => setSampleInk([])}
@@ -1967,28 +1954,6 @@ export default function App() {
             <>
               <div className="settings-section">
                 <h3>Schreiben</h3>
-                <label className="setting-row">
-                  <span>
-                    Auch mit dem Finger schreiben
-                    <small>
-                      Aus: Finger zum Scrollen, Pencil zum Schreiben.
-                    </small>
-                  </span>
-                  <input
-                    type="checkbox"
-                    role="switch"
-                    checked={data.settings.touchWriting}
-                    onChange={(e) =>
-                      setData({
-                        ...data,
-                        settings: {
-                          ...data.settings,
-                          touchWriting: e.target.checked,
-                        },
-                      })
-                    }
-                  />
-                </label>
                 <label className="setting-row">
                   <span>
                     Schriftprofil bei Abgabe mitsenden

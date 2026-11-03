@@ -198,8 +198,12 @@ test("a quick, repeated scratch only removes the crossed ink", () => {
   assert.equal(result[0].points[0].x, 10);
   assert.equal(result[1].points.at(-1)?.x, 210);
   assert.equal(result[2], adjacent);
+  const short = [p(85, 47), p(108, 49), p(85, 51), p(107, 53)];
+  const shortResult = eraseScratch(original, short, 650);
+  assert.equal(shortResult.length, 3);
+  assert.equal(shortResult[2], adjacent);
   assert.equal(eraseScratch(original, scratch, 1700), original);
-  assert.equal(eraseScratch(original, scratch.slice(0, 4), 350), original);
+  assert.equal(eraseScratch(original, scratch.slice(0, 3), 350), original);
   assert.equal(
     eraseScratch(
       original,
