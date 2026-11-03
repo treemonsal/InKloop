@@ -7,6 +7,8 @@ import {
   parseResponse,
   chatLink,
   eraseAt,
+  eraseAlong,
+  strokePath,
   buildPrompt,
   uid,
   type Stroke,
@@ -74,9 +76,33 @@ test("only approved HTTPS original chat links open", () => {
   ])
     assert.throws(() => chatLink(link, "chatgpt"));
 });
-test("eraser detects the middle of long segments and leaves distant strokes intact", () => {
-  assert.deepEqual(eraseAt([stroke], { x: 55, y: 55, p: 0.5 }, 10), []);
+test("eraser keeps both ends of a stroke and catches fast movement between samples", () => {
+  const d = eraseAt([stroke], { x: 55, y: 55, p: 0.5 }, 10);
+  assert.equal(d.length, 2);
+  assert.deepEqual(d[0].points[0], stroke.points[0]);
+  assert.deepEqual(d[1].points.at(-1), stroke.points[1]);
+  assert.ok(d[0].points.at(-1)!.x < 55 && d[1].points[0].x > 55);
   assert.deepEqual(eraseAt([stroke], { x: 100, y: 10, p: 0.5 }, 10), [stroke]);
+  assert.equal(
+    eraseAlong([stroke], { x: 55, y: 0, p: 0.5 }, { x: 55, y: 110, p: 0.5 }, 10)
+      .length,
+    2,
+  );
+});
+test("a freehand corner is rounded without shifting the ends", () => {
+  const points = [
+    { x: 0, y: 0, p: 0.3 },
+    { x: 20, y: 0, p: 0.7 },
+    { x: 20, y: 20, p: 0.9 },
+  ];
+  const path = strokePath({ ...stroke, points });
+  assert.deepEqual(path[0], points[0]);
+  assert.deepEqual(path.at(-1), points.at(-1));
+  assert.ok(path.some((p) => p.x > 10 && p.x < 20 && p.y > 0 && p.y < 10));
+  assert.deepEqual(strokePath({ ...stroke, tool: "line", points }), [
+    points[0],
+    points.at(-1),
+  ]);
 });
 test("response import separates exact transcription from feedback and supports raw replies", () => {
   assert.deepEqual(

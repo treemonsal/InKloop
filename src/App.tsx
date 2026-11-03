@@ -12,7 +12,6 @@ import {
   ArrowDownToLine,
   ArrowRight,
   ArrowUpRight,
-  BookOpen,
   Check,
   CheckCheck,
   ChevronDown,
@@ -52,6 +51,7 @@ import {
   deleteSharedPage,
   type BridgeEvent,
 } from "./bridge";
+import { useLiquidChrome } from "./useLiquidChrome";
 import InkCanvas, { type Tool } from "./Canvas";
 import {
   type AppData,
@@ -231,6 +231,13 @@ export default function App() {
     channel = useRef<BroadcastChannel | null>(null);
   const importFile = useRef<HTMLInputElement>(null);
   const restoreCandidate = useRef<AppData | null>(null);
+  const glassToolbar = useRef<HTMLDivElement>(null);
+  const glassActions = useRef<HTMLDivElement>(null);
+  useLiquidChrome(
+    glassToolbar,
+    glassActions,
+    Boolean(data) && !inLibrary && !loadError,
+  );
   const panelToggle = useRef<HTMLButtonElement>(null);
   const learningPanel = useRef<HTMLElement>(null);
   const closeLearningPanel = () => {
@@ -923,7 +930,7 @@ export default function App() {
         <main className="library">
           <header className="library-top">
             <div className="library-brand">
-              <Logo /> Inkloop <small className="library-version">V6</small>
+              <Logo /> Inkloop <small className="library-version">V8</small>
             </div>
             <div className="topbar-actions">
               <IconButton label="Deine Handschrift" onClick={startProfile}>
@@ -990,9 +997,6 @@ export default function App() {
                       onClick={() => openNotebook(n)}
                     >
                       <span className="notebook-cover" aria-hidden="true">
-                        <span className="cover-icon">
-                          <BookOpen size={19} strokeWidth={1.7} />
-                        </span>
                         <span
                           className={`cover-paper paper-${previewPage.paper}`}
                         >
@@ -1083,7 +1087,7 @@ export default function App() {
                   {notebook.name}
                 </span>
               </div>
-              <div className="topbar-actions">
+              <div className="topbar-actions liquid-ui" ref={glassActions}>
                 <span
                   role="status"
                   className={`save-state ${saving === "error" ? "error" : ""}`}
@@ -1190,7 +1194,8 @@ export default function App() {
                 </div>
                 <div className="canvas-shell">
                   <div
-                    className="ink-toolbar"
+                    className="ink-toolbar liquid-ui"
+                    ref={glassToolbar}
                     role="toolbar"
                     aria-label="Schreibwerkzeuge"
                   >
@@ -1612,7 +1617,7 @@ export default function App() {
                           }
                         >
                           <option value="chatgpt">ChatGPT</option>
-                          <option value="claude">Claude</option>
+                          <option value="claude">Claude (manuell)</option>
                         </select>
                       </div>
                       <button

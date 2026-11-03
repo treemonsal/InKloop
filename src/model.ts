@@ -5,6 +5,7 @@ export type Stroke = {
   color: string;
   width: number;
   points: Point[];
+  flattened?: true;
 };
 export type Paper = "grid" | "ruled" | "dots" | "blank";
 export type Page = {
@@ -166,14 +167,181 @@ export function distanceToSegment(p: Point, a: Point, b: Point) {
     );
   return Math.hypot(p.x - a.x - t * dx, p.y - a.y - t * dy);
 }
-export function eraseAt(strokes: Stroke[], p: Point, radius: number) {
-  return strokes.filter(
-    (s) =>
-      !s.points.some(
-        (a, i) =>
-          distanceToSegment(p, a, s.points[i + 1] || a) < radius + s.width / 2,
-      ),
+function interpolate(a: Point, b: Point, t: number): Point {
+  return {
+    x: a.x + (b.x - a.x) * t,
+    y: a.y + (b.y - a.y) * t,
+    p: a.p + (b.p - a.p) * t,
+  };
+}
+
+export function strokePath(stroke: Stroke): Point[] {
+  const points = stroke.points;
+  if (points.length <= 2 || stroke.flattened) return points;
+  if (stroke.tool === "line") return [points[0], points.at(-1)!];
+
+  let start = interpolate(points[0], points[1], 0.5);
+  const path = [points[0], start];
+  for (let i = 1; i < points.length - 1; i++) {
+    const end = interpolate(points[i], points[i + 1], 0.5);
+    // Sample each rounded corner so drawing and erasing share the same path.
+    for (const t of [0.25, 0.5, 0.75, 1]) {
+      path.push(
+        interpolate(
+          interpolate(start, points[i], t),
+          interpolate(points[i], end, t),
+          t,
+        ),
+      );
+    }
+    start = end;
+  }
+  path.push(points.at(-1)!);
+  return path;
+}
+
+type Interval = [start: number, end: number];
+
+function circleInterval(
+  a: Point,
+  b: Point,
+  center: Point,
+  radius: number,
+): Interval | undefined {
+  const dx = b.x - a.x,
+    dy = b.y - a.y;
+  const x = a.x - center.x,
+    y = a.y - center.y;
+  const lengthSquared = dx * dx + dy * dy;
+  const offset = x * x + y * y - radius * radius;
+  if (!lengthSquared) return offset < 0 ? [0, 1] : undefined;
+  const projection = x * dx + y * dy;
+  const discriminant = projection * projection - lengthSquared * offset;
+  if (discriminant <= 0) return;
+  const half = Math.sqrt(discriminant);
+  const start = Math.max(0, (-projection - half) / lengthSquared);
+  const end = Math.min(1, (-projection + half) / lengthSquared);
+  if (start < end) return [start, end];
+}
+
+function bandInterval(
+  a: number,
+  b: number,
+  min: number,
+  max: number,
+): Interval | undefined {
+  if (a === b) return min <= a && a <= max ? [0, 1] : undefined;
+  const t1 = (min - a) / (b - a),
+    t2 = (max - a) / (b - a);
+  const start = Math.max(0, Math.min(t1, t2)),
+    end = Math.min(1, Math.max(t1, t2));
+  if (start < end) return [start, end];
+}
+
+function capsuleInterval(
+  a: Point,
+  b: Point,
+  from: Point,
+  to: Point,
+  radius: number,
+): Interval | undefined {
+  const dx = to.x - from.x,
+    dy = to.y - from.y;
+  const length = Math.hypot(dx, dy);
+  if (!length) return circleInterval(a, b, from, radius);
+
+  // A sweep is a rectangle with a round cap at either end.
+  const along = (p: Point) =>
+    ((p.x - from.x) * dx + (p.y - from.y) * dy) / length;
+  const across = (p: Point) =>
+    ((p.y - from.y) * dx - (p.x - from.x) * dy) / length;
+  const x = bandInterval(along(a), along(b), 0, length);
+  const y = bandInterval(across(a), across(b), -radius, radius);
+  const intervals = [
+    circleInterval(a, b, from, radius),
+    circleInterval(a, b, to, radius),
+  ];
+  if (x && y && Math.max(x[0], y[0]) < Math.min(x[1], y[1]))
+    intervals.push([Math.max(x[0], y[0]), Math.min(x[1], y[1])]);
+  const hits = intervals.filter((interval): interval is Interval =>
+    Boolean(interval),
   );
+  if (hits.length)
+    return [
+      Math.min(...hits.map((i) => i[0])),
+      Math.max(...hits.map((i) => i[1])),
+    ];
+}
+
+export function eraseAlong(
+  strokes: Stroke[],
+  from: Point,
+  to: Point,
+  radius: number,
+): Stroke[] {
+  let changed = false;
+  const remaining = strokes.flatMap((stroke) => {
+    const padding =
+      radius + stroke.width * (stroke.tool === "pen" ? 0.675 : 0.5);
+    const left = Math.min(from.x, to.x) - padding,
+      right = Math.max(from.x, to.x) + padding;
+    const top = Math.min(from.y, to.y) - padding,
+      bottom = Math.max(from.y, to.y) + padding;
+    const raw = stroke.points;
+    if (
+      raw.every((p) => p.x < left) ||
+      raw.every((p) => p.x > right) ||
+      raw.every((p) => p.y < top) ||
+      raw.every((p) => p.y > bottom)
+    )
+      return [stroke];
+
+    const points = strokePath(stroke);
+    if (points.length === 1) {
+      if (distanceToSegment(points[0], from, to) >= padding) return [stroke];
+      changed = true;
+      return [];
+    }
+    let hit = false;
+    let part = [points[0]];
+    const parts: Point[][] = [];
+    for (let i = 1; i < points.length; i++) {
+      const a = points[i - 1],
+        b = points[i];
+      const cut = capsuleInterval(a, b, from, to, padding);
+      if (!cut) {
+        if (!part.length) part.push(a);
+        part.push(b);
+        continue;
+      }
+      hit = true;
+      const [start, end] = cut;
+      if (start > 0) {
+        if (!part.length) part.push(a);
+        part.push(interpolate(a, b, start));
+      }
+      if (part.length >= 2) parts.push(part);
+      part = end < 1 ? [interpolate(a, b, end), b] : [];
+    }
+    if (!hit) return [stroke];
+    if (part.length >= 2) parts.push(part);
+    changed = true;
+    return parts.map((points, i) => ({
+      ...stroke,
+      id: i === 0 ? stroke.id : uid(),
+      points,
+      flattened: true as const,
+    }));
+  });
+  return changed ? remaining : strokes;
+}
+
+export function eraseAt(
+  strokes: Stroke[],
+  point: Point,
+  radius: number,
+): Stroke[] {
+  return eraseAlong(strokes, point, point, radius);
 }
 const record = (x: unknown): x is Record<string, unknown> =>
   !!x && typeof x === "object" && !Array.isArray(x);
@@ -189,6 +357,7 @@ function validStrokes(x: unknown): x is Stroke[] {
       (s) =>
         record(s) &&
         string(s.id, 100) &&
+        (s.flattened === undefined || s.flattened === true) &&
         ["pen", "marker", "line"].includes(s.tool as string) &&
         typeof s.color === "string" &&
         /^#[\da-f]{6}$/i.test(s.color) &&

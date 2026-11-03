@@ -1,4 +1,11 @@
-import type { Notebook, Point, Sample, Stroke, Submission } from "./model";
+import {
+  strokePath,
+  type Notebook,
+  type Point,
+  type Sample,
+  type Stroke,
+  type Submission,
+} from "./model";
 export const PAGE_W = 900,
   PAGE_H = 1200;
 const colorMap: Record<string, string> = {
@@ -11,41 +18,106 @@ const colorMap: Record<string, string> = {
   "#a9bed7": "#315b88",
   "#c1acd6": "#704d91",
 };
+function traceCurve(ctx: CanvasRenderingContext2D, points: Point[]) {
+  if (points.length > 2) {
+    const [first, second] = points;
+    ctx.lineTo((first.x + second.x) / 2, (first.y + second.y) / 2);
+  }
+  for (let i = 1; i < points.length - 1; i++) {
+    const a = points[i],
+      b = points[i + 1];
+    ctx.quadraticCurveTo(a.x, a.y, (a.x + b.x) / 2, (a.y + b.y) / 2);
+  }
+  const end = points.at(-1)!;
+  ctx.lineTo(end.x, end.y);
+}
+
+function penOutline(
+  ctx: CanvasRenderingContext2D,
+  points: Point[],
+  width: number,
+) {
+  const sides = points.map((point, i) => {
+    const before = points[Math.max(0, i - 1)],
+      after = points[Math.min(points.length - 1, i + 1)];
+    const dx = after.x - before.x,
+      dy = after.y - before.y;
+    const angle = Math.atan2(dy, dx) + Math.PI / 2;
+    const radius = (width * (0.55 + 0.8 * point.p)) / 2;
+    const x = Math.cos(angle) * radius,
+      y = Math.sin(angle) * radius;
+    return {
+      point,
+      angle,
+      radius,
+      outer: { ...point, x: point.x + x, y: point.y + y },
+      inner: { ...point, x: point.x - x, y: point.y - y },
+    };
+  });
+  const first = sides[0],
+    last = sides.at(-1)!;
+  ctx.moveTo(first.outer.x, first.outer.y);
+  traceCurve(
+    ctx,
+    sides.map((side) => side.outer),
+  );
+  ctx.arc(
+    last.point.x,
+    last.point.y,
+    last.radius,
+    last.angle,
+    last.angle - Math.PI,
+    true,
+  );
+  traceCurve(
+    ctx,
+    sides.reverse().map((side) => side.inner),
+  );
+  ctx.arc(
+    first.point.x,
+    first.point.y,
+    first.radius,
+    first.angle - Math.PI,
+    first.angle - 2 * Math.PI,
+    true,
+  );
+  ctx.closePath();
+  ctx.fill();
+}
+
 export function drawStroke(
   ctx: CanvasRenderingContext2D,
-  s: Stroke,
+  stroke: Stroke,
   light = false,
 ) {
-  if (!s.points.length) return;
+  const points = stroke.tool === "pen" ? strokePath(stroke) : stroke.points;
+  if (!points.length || (stroke.tool === "marker" && points.length < 2)) return;
   ctx.save();
-  ctx.lineCap = "round";
+  ctx.lineCap = stroke.tool === "marker" ? "butt" : "round";
   ctx.lineJoin = "round";
-  ctx.strokeStyle = light ? colorMap[s.color] || s.color : s.color;
+  ctx.strokeStyle = light
+    ? colorMap[stroke.color] || stroke.color
+    : stroke.color;
   ctx.fillStyle = ctx.strokeStyle;
-  ctx.globalAlpha = s.tool === "marker" ? 0.28 : 1;
-  const pts = s.points;
-  const width = (p: Point) =>
-    s.width * (s.tool === "pen" ? 0.55 + 0.8 * p.p : 1);
-  if (pts.length === 1) {
-    ctx.beginPath();
-    ctx.arc(pts[0].x, pts[0].y, width(pts[0]) / 2, 0, Math.PI * 2);
+  ctx.globalAlpha = stroke.tool === "marker" ? 0.28 : 1;
+  ctx.lineWidth = stroke.width;
+  ctx.beginPath();
+
+  const first = points[0];
+  if (points.length === 1) {
+    const pressure = stroke.tool === "pen" ? 0.55 + 0.8 * first.p : 1;
+    ctx.arc(first.x, first.y, (stroke.width * pressure) / 2, 0, Math.PI * 2);
     ctx.fill();
-  } else if (s.tool === "line") {
-    ctx.lineWidth = s.width;
-    ctx.beginPath();
-    ctx.moveTo(pts[0].x, pts[0].y);
-    ctx.lineTo(pts[pts.length - 1].x, pts[pts.length - 1].y);
-    ctx.stroke();
+  } else if (stroke.tool === "pen") {
+    penOutline(ctx, points, stroke.width);
   } else {
-    for (let i = 1; i < pts.length; i++) {
-      const a = pts[i - 1],
-        b = pts[i];
-      ctx.lineWidth = (width(a) + width(b)) / 2;
-      ctx.beginPath();
-      ctx.moveTo(a.x, a.y);
-      ctx.lineTo(b.x, b.y);
-      ctx.stroke();
+    ctx.moveTo(first.x, first.y);
+    if (stroke.tool === "marker" && !stroke.flattened) {
+      traceCurve(ctx, stroke.points);
+    } else {
+      for (const point of points.slice(1)) ctx.lineTo(point.x, point.y);
     }
+    ctx.stroke();
   }
   ctx.restore();
 }

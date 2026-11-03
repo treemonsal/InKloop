@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, type PointerEvent } from "react";
-import { eraseAt, uid, type Point, type Stroke, type Paper } from "./model";
+import { eraseAlong, uid, type Point, type Stroke, type Paper } from "./model";
 import { PAGE_H, PAGE_W, drawStroke, renderInk } from "./ink";
 export type Tool = "pen" | "marker" | "eraser" | "line";
 type Props = {
@@ -30,6 +30,7 @@ export default function InkCanvas({
     committedCanvas = useRef<HTMLCanvasElement>(null),
     painted = useRef<Stroke[] | null>(null),
     live = useRef<Stroke | null>(null),
+    eraserPoint = useRef<Point | null>(null),
     base = useRef(strokes),
     pointer = useRef<number | null>(null),
     frame = useRef(0),
@@ -57,7 +58,9 @@ export default function InkCanvas({
         const result = live.current
           ? [...working.current, live.current]
           : working.current;
-        if (live.current || result !== base.current) change.current(result);
+        if (live.current?.tool === "marker" && live.current.points.length < 2)
+          return;
+        if (result !== base.current) change.current(result);
       }
     },
     [],
@@ -87,9 +90,13 @@ export default function InkCanvas({
     };
   };
   const erase = (p: Point) => {
-    const remaining = eraseAt(working.current, p, 15);
-    if (remaining.length !== working.current.length)
-      working.current = remaining;
+    working.current = eraseAlong(
+      working.current,
+      eraserPoint.current ?? p,
+      p,
+      15,
+    );
+    eraserPoint.current = p;
   };
   const appendPoint = (p: Point) => {
     const stroke = live.current;
@@ -98,7 +105,9 @@ export default function InkCanvas({
       return;
     }
     const last = stroke.points.at(-1)!;
-    if (Math.hypot(last.x - p.x, last.y - p.y) <= 0.4) return;
+    const minimum =
+      stroke.tool === "marker" && stroke.points.length === 1 ? 2 : 0.4;
+    if (Math.hypot(last.x - p.x, last.y - p.y) <= minimum) return;
     if (stroke.tool === "line") stroke.points = [stroke.points[0], p];
     else stroke.points.push(p);
   };
@@ -137,16 +146,18 @@ export default function InkCanvas({
   };
   const finish = (e: PointerEvent<HTMLCanvasElement>) => {
     if (pointer.current !== e.pointerId) return;
-    const stroke = live.current;
     if (e.type === "pointerup") {
       appendPoint(
         point(
           e,
           e.currentTarget.getBoundingClientRect(),
-          stroke?.points.at(-1)?.p,
+          live.current?.points.at(-1)?.p,
         ),
       );
     }
+    const draft = live.current;
+    const stroke =
+      draft?.tool === "marker" && draft.points.length < 2 ? null : draft;
     const result = stroke ? [...working.current, stroke] : working.current;
     const changed = result !== base.current;
     const committed = committedCanvas.current?.getContext("2d");
@@ -156,6 +167,7 @@ export default function InkCanvas({
     }
     pointer.current = null;
     live.current = null;
+    eraserPoint.current = null;
     base.current = result;
     working.current = result;
     paint();

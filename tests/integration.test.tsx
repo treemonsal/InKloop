@@ -69,6 +69,8 @@ const ctx = {
   restore: no,
   beginPath: no,
   arc: no,
+  quadraticCurveTo: no,
+  closePath: no,
   fill: no,
   stroke: no,
   moveTo: no,
@@ -190,6 +192,14 @@ test("complete notebook flow: draw, undo/redo, persist, submit snapshot, import 
         bubbles: true,
       }),
     );
+  await click("Textmarker");
+  await act(async () => {
+    send("pointerdown", 60, 100);
+    send("pointerup", 60, 100);
+    await delay(400);
+  });
+  assert.equal((await loadData())!.notebooks[0].pages[0].strokes.length, 0);
+  await click("Stift");
   await act(async () => {
     send("pointerdown", 80, 150);
     send("pointermove", 130, 170);

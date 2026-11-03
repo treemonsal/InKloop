@@ -1777,16 +1777,6 @@ input[type="checkbox"] {
   background: radial-gradient(ellipse at 60% 10%, #39393e, #242427 74%);
   border: 1px solid #ffffff12;
 }
-.cover-icon {
-  position: absolute;
-  top: 0.75rem;
-  left: 0.75rem;
-  padding: 0.48rem;
-  color: #e5e5e8;
-  background: #161618c9;
-  border: 1px solid #ffffff20;
-  border-radius: 0.55rem;
-}
 .cover-paper {
   display: block;
   position: relative;
@@ -1865,11 +1855,6 @@ input[type="checkbox"] {
   }
   .notebook-cover {
     height: 8.4rem;
-  }
-  .cover-icon {
-    top: 0.42rem;
-    left: 0.42rem;
-    padding: 0.28rem;
   }
 }
 .app-main {
@@ -2305,5 +2290,81 @@ input[type="checkbox"] {
   .writing-area .ink-toolbar {
     background: #242427;
     backdrop-filter: none;
+  }
+}
+
+/* Glass groups controls and lets the notebook remain the focal surface. */
+::selection {
+  background: var(--accent);
+  color: var(--bg);
+}
+input,
+textarea {
+  caret-color: var(--accent);
+}
+.topbar .topbar-actions.liquid-ui {
+  min-width: 0;
+  padding: 2px;
+  gap: 0.3rem;
+  border-radius: 17px;
+  border: 1px solid #ffffff26;
+  background: #1d1e21;
+  --lg-tint: rgb(23 24 27 / 0.78);
+}
+.writing-area .ink-toolbar.liquid-ui {
+  border-radius: 20px;
+  border-color: #ffffff32;
+  background: #232426;
+  --lg-tint: rgb(27 28 31 / 0.72);
+}
+.topbar .topbar-actions.liquid-ui.lg-host,
+.writing-area .ink-toolbar.liquid-ui.lg-host {
+  background: transparent;
+  backdrop-filter: none;
+}
+.liquid-ui {
+  --lg-solid: #232426;
+}
+.liquid-ui > .lg-layer {
+  box-shadow: none;
+}
+.topbar .liquid-ui .save-state {
+  padding-inline-start: 0.4rem;
+  margin: 0;
+}
+.topbar .liquid-ui .panel-toggle {
+  border-color: transparent;
+  border-radius: 13px;
+}
+.topbar .liquid-ui .submit-button {
+  border-radius: 13px;
+}
+.writing-area .ink-toolbar.liquid-ui .icon-button {
+  border-radius: 12px;
+}
+.learning-panel .panel-tabs {
+  padding: 3px;
+  gap: 3px;
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  background: var(--surface);
+}
+.learning-panel .panel-tabs button {
+  border-radius: 9px;
+  padding-block: 0;
+  min-height: 44px;
+}
+.learning-panel .panel-tabs button.selected {
+  background: #ffffff13;
+}
+.learning-panel .panel-tabs button.selected::after {
+  display: none;
+}
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .topbar .topbar-actions.liquid-ui,
+  .writing-area .ink-toolbar.liquid-ui {
+    background: #232426;
+    backdrop-filter: none;
+    border-color: #ffffff50;
   }
 }
