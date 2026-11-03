@@ -8,7 +8,9 @@ Inkloop stellt ein persönliches MCP-Plugin für ChatGPT bereit. Nach Aktivierun
 
 - App und Chat müssen mit demselben ChatGPT-Konto geöffnet sein. Die private Sites-Anmeldung sichert den Zugriff.
 - In ChatGPT Inkloop als Plugin aktivieren. Danach z. B.: „Sende die nächste Aufgabe mit Inkloop in mein Lernheft.“
+- Neu eingehende Aufgaben erhalten je eine eigene Seite. Die aktuelle Seite bleibt offen.
 - Nach **Antwort abgeben** den Plugin-Auftrag in den bestehenden Chat kopieren oder ChatGPT auffordern, die neueste Inkloop-Abgabe zu lesen.
+- Offline erstellte oder fehlgeschlagene Abgaben bleiben im Lernheft. In der Abgabenliste zeigt Inkloop den Sendestatus an und bietet **Erneut an ChatGPT senden** für dieselbe Abgabe an.
 - Die Antwort wird bei geöffnetem Online-Lernheft automatisch abgeholt (alle sechs Sekunden und beim Zurückwechseln). Der Chat selbst wird nicht automatisch angeschrieben.
 - Die Bridge speichert bewusst abgegebene PNGs, Aufgaben, Antworten und den Lernheftindex privat in R2, getrennt nach der von Sites bestätigten Nutzer-ID. Nicht abgegebene Handschrift bleibt lokal.
 - Claude und Chats ohne aktiviertes Plugin verwenden die vollständige manuelle Bildübergabe. Eine Claude-MCP-Verbindung wurde nicht eingerichtet oder verifiziert.
@@ -20,7 +22,7 @@ Inkloop stellt ein persönliches MCP-Plugin für ChatGPT bereit. Nach Aktivierun
 3. Lernheft öffnen, Aufgabe einfügen, mit Pencil schreiben. Finger scrollen standardmäßig; Fingereingabe ist in den Einstellungen aktivierbar.
 4. **Antwort abgeben** erstellt einen unveränderlichen Stand deiner Lösung und ein PNG auf weißem Hintergrund. Bild und Anweisung kopieren/teilen und im Original-Chat einfügen. Ein gespeicherter Chat-Link führt zu derselben Unterhaltung.
 5. Die KI zuerst originalgetreu transkribieren und danach Feedback geben lassen. Ihren JSON-Codeblock unter **KI-Antwort übernehmen** einfügen. Abschrift, Feedback und nächste Aufgabe werden getrennt angezeigt. Normaler Text wird als Feedback gespeichert. Markdown, Tabellen und LaTeX werden unterstützt.
-6. Regelmäßig unter **Einstellungen → Sicherung laden** eine JSON-Sicherung herunterladen. Wiederherstellen ersetzt nach Bestätigung alle lokalen Daten.
+6. Regelmäßig unter **Einstellungen → Sicherung laden** eine JSON-Sicherung herunterladen. Wiederherstellen ersetzt nach Bestätigung alle lokalen Daten. Auch Sicherungen über 40 MB können eingelesen werden.
 
 ## Bewusste Grenzen
 
@@ -28,6 +30,7 @@ Inkloop stellt ein persönliches MCP-Plugin für ChatGPT bereit. Nach Aktivierun
 - Eine PWA kann die Oberfläche und Kontodaten anderer Websites nicht auslesen. Die bestehende Chat-Unterhaltung bleibt im Originaldienst. Bild-/Textübertragung und Rückimport benötigen Nutzereingaben; automatisches Anschreiben oder Mitlesen beliebiger Original-Chats gehört nicht zu dieser Version. Über das aktivierte ChatGPT-Plugin werden gezielt übergebene Aufgaben und Antworten synchronisiert.
 - Alle Lernhefte und Proben bleiben in IndexedDB auf diesem Gerät/in diesem Browser. Keine vollständige Cloud-Synchronisierung der Lernhefte; für das ChatGPT-Plugin werden gezielt Abgaben und Chat-Antworten serverseitig bereitgestellt. Gelöschte Website-Daten, Privatmodus oder Speicherdruck können Daten entfernen. Safari und Home-Bildschirm-App können getrennte Speicher haben.
 - Das Lernheft funktioniert nach vollständigem ersten Laden auch offline. Der KI-Chat benötigt Internet. Die Service-Worker-Aktualisierung aktiviert sich nach dem Schließen alter Inkloop-Fenster.
+- Beim Löschen einer Seite kannst du zwischen lokalem Löschen und Löschen inklusive Serverkopien wählen. Die zweite Option entfernt auch Bilder und Rückmeldungen aus der Inkloop Bridge. Bereits in einen Chat übertragene Inhalte verwaltest du dort.
 - Der Radierer löscht ganze Striche. Rückgängig/Wiederholen gilt für die Sitzung und die jeweilige Seite. Abgaben behalten ihre eigenen Strichkopien.
 - Pencil-Druck wird aus Pointer Events übernommen. Handballeneingabe wird im Pencil-Modus ignoriert. Echtes Schreibgefühl und iPad-Clipboard/Share benötigen einen Gerätetest.
 
@@ -49,7 +52,7 @@ Die Web-App wird zunächst statisch in `dist/` gebaut. Der anschließende Worker
 - React + TypeScript + Vite, Lucide für Symbole.
 - Eigene Canvas-Schreibfläche mit logischen 900 × 1200 Punkten, Pencil-Druck, Pointer Capture, gebündelten Pointer Events und Bildexport.
 - IndexedDB-Speicherung mit Transaktionsprüfung und serieller Schreibwarteschlange. Fehler sperren bestehende Daten vor einem versehentlichen Neustart; Änderungen anderer Fenster lösen einen Neuladehinweis aus.
-- Wiederherstellung mit Formatprüfung, Größenlimits, gültigen Chat-URLs und eindeutigen IDs.
+- Wiederherstellung mit Formatprüfung, gültigen Chat-URLs und eindeutigen IDs.
 - KI-Antworten als sicher gerendertes Markdown (kein HTML), GFM-Tabellen und KaTeX; Darstellung bei Bedarf nachgeladen.
 - Keine Analytics, keine eigenen Login-Cookies (Anmeldung durch Sites), keine externen Schriften, keine eingebetteten Drittanbieter-Chats. Cloudflare R2 für die private Plugin-Bridge.
 

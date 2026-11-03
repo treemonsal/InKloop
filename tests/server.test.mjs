@@ -3,13 +3,19 @@ import assert from "node:assert/strict";
 import worker from "../worker/index.js";
 class Bucket {
   objects = new Map();
-  async put(key, value) {
+  async put(key, value, options) {
+    if (options?.onlyIf?.etagDoesNotMatch === "*" && this.objects.has(key))
+      return null;
     this.objects.set(
       key,
       typeof value === "string"
         ? new TextEncoder().encode(value)
         : new Uint8Array(value),
     );
+    return { key };
+  }
+  async delete(key) {
+    this.objects.delete(key);
   }
   async get(key) {
     const bytes = this.objects.get(key);
@@ -58,16 +64,21 @@ const rpc = async (name, args = {}, actor = "alice") =>
       env,
     )
   ).json();
-const submit = async (actor = "alice") => {
+const submit = async (
+  actor = "alice",
+  id = "submission-1",
+  pageId = "page-1",
+  task = "x² = 9",
+) => {
   const form = new FormData();
   form.set(
     "metadata",
     JSON.stringify({
-      id: "submission-1",
+      id,
       notebookId: "math",
-      pageId: "page-1",
+      pageId,
       prompt: "Transcribe exactly.",
-      task: "x² = 9",
+      task,
       subject: "Mathematik",
       language: "de",
       createdAt: Date.now(),
@@ -199,4 +210,64 @@ test("MCP discovery and tool list expose the four real operations", async () => 
     assert.ok(result.result);
     if (method === "tools/list") assert.equal(result.result.tools.length, 4);
   }
+});
+
+test("resending a submission keeps the original image and metadata", async () => {
+  await submit("retry");
+  assert.equal(
+    (await submit("retry", "submission-1", "page-1", "Changed task")).status,
+    200,
+  );
+  const result = await rpc("inkloop_read_submission", {}, "retry");
+  assert.equal(JSON.parse(result.result.content[0].text).task, "x² = 9");
+});
+
+test("deleting a page removes private copies and feedback with an idempotent retry", async () => {
+  await submit("delete", "older", "other-page");
+  await submit("delete");
+  await submit("other");
+  const response = await rpc(
+    "inkloop_write_response",
+    {
+      submission_id: "submission-1",
+      transcription: "x",
+      feedback: "y",
+    },
+    "delete",
+  );
+  assert.ok(!response.result.isError);
+  const remove = () =>
+    worker.fetch(
+      request(
+        "/api/bridge/page/page-1",
+        "DELETE",
+        JSON.stringify({
+          submissionIds: ["submission-1"],
+        }),
+        "delete",
+      ),
+      env,
+    );
+  assert.equal((await remove()).status, 200);
+  assert.equal((await remove()).status, 200);
+  assert.equal(
+    (
+      await rpc(
+        "inkloop_read_submission",
+        { submission_id: "submission-1" },
+        "delete",
+      )
+    ).result.isError,
+    true,
+  );
+  const latest = await rpc("inkloop_read_submission", {}, "delete");
+  assert.equal(JSON.parse(latest.result.content[0].text).id, "older");
+  assert.ok(
+    !(await rpc("inkloop_read_submission", {}, "other")).result.isError,
+  );
+  const events = await (
+    await worker.fetch(request("/api/bridge", "GET", undefined, "delete"), env)
+  ).json();
+  assert.deepEqual(events.events, []);
+  assert.equal((await submit("delete")).status, 409);
 });

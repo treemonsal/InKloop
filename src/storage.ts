@@ -1,4 +1,4 @@
-import { type AppData, parseBackup } from "./model";
+import { type AppData, validateData } from "./model";
 const DB = "inkloop-v1";
 let connection: Promise<IDBDatabase> | undefined;
 function open() {
@@ -22,7 +22,7 @@ export async function readStoredData(): Promise<unknown> {
 }
 export async function loadData(): Promise<AppData | null> {
   const raw = await readStoredData();
-  return raw ? parseBackup(JSON.stringify(raw), Infinity) : null;
+  return raw ? validateData(raw) : null;
 }
 export async function saveData(data: AppData) {
   const db = await open();

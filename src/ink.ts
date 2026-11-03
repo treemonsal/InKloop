@@ -1,4 +1,4 @@
-import type { AppData, Notebook, Point, Stroke, Submission } from "./model";
+import type { Notebook, Point, Sample, Stroke, Submission } from "./model";
 export const PAGE_W = 900,
   PAGE_H = 1200;
 const colorMap: Record<string, string> = {
@@ -84,9 +84,8 @@ function wrappedText(
 export async function submissionImage(
   n: Notebook,
   s: Submission,
-  data: AppData,
+  samples: Sample[],
 ): Promise<Blob> {
-  const samples = data.settings.includeProfile ? data.samples : [];
   const height = 1360 + samples.length * 240;
   const canvas = document.createElement("canvas");
   canvas.width = 1000;

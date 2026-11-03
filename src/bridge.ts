@@ -68,3 +68,14 @@ export async function publishSubmission(
   body.set("image", blob, "answer.png");
   return request("/api/bridge/submission", { method: "POST", body });
 }
+
+export async function deleteSharedPage(
+  pageId: string,
+  submissionIds: string[],
+) {
+  return request("/api/bridge/page/" + encodeURIComponent(pageId), {
+    method: "DELETE",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ submissionIds }),
+  });
+}

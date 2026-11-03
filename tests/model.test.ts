@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   initialData,
   parseBackup,
+  receiveTask,
   parseResponse,
   chatLink,
   eraseAt,
@@ -119,4 +120,42 @@ test("handoff prompt preserves errors, context, subject, language and sample bou
     "test-submission",
   ])
     assert.ok(prompt.includes(expected), expected);
+});
+
+test("large backups and legacy long transcriptions can be restored", () => {
+  const d = initialData();
+  const page = d.notebooks[0].pages[0];
+  const transcription = "x".repeat(200001);
+  page.submissions = Array.from({ length: 201 }, () => ({
+    id: uid(),
+    createdAt: 1,
+    strokes: [],
+    task: "",
+    transcription,
+    feedback: "",
+    nextTask: "",
+  }));
+  const exported = JSON.stringify(d);
+  assert.ok(exported.length > 40_000_000);
+  assert.equal(
+    parseBackup(exported).notebooks[0].pages[0].submissions[0].transcription,
+    transcription,
+  );
+});
+
+test("two received tasks preserve a written assignment and the open page", () => {
+  const d = initialData();
+  const n = d.notebooks[0];
+  n.pages[0].task = "Vorhandene Aufgabe";
+  const first = receiveTask(d, n.id, "event-one", "Erste Aufgabe");
+  const second = receiveTask(first, n.id, "event-two", "Zweite Aufgabe", "en");
+  assert.equal(second.activePage, d.activePage);
+  assert.deepEqual(
+    second.notebooks[0].pages.map((p) => p.task),
+    ["Vorhandene Aufgabe", "Erste Aufgabe", "Zweite Aufgabe"],
+  );
+  assert.equal(
+    receiveTask(second, n.id, "event-two", "Zweite Aufgabe"),
+    second,
+  );
 });

@@ -85,6 +85,64 @@ const put = (bucket, key, value) =>
   bucket.put(key, JSON.stringify(value), {
     httpMetadata: { contentType: "application/json" },
   });
+const submissionKey = (prefix, id) => prefix + "submissions/" + id;
+const deletedKey = (prefix, id) => prefix + "deleted/" + id;
+const firstWrite = { etagDoesNotMatch: "*" };
+
+async function* records(bucket, prefix) {
+  let cursor;
+  do {
+    const list = await bucket.list({ prefix, cursor });
+    for (const { key } of list.objects) {
+      if (!key.endsWith(".json")) continue;
+      const value = await read(bucket, key);
+      if (value) yield { key, value };
+    }
+    cursor = list.truncated ? list.cursor : undefined;
+  } while (cursor);
+}
+
+async function latestSubmission(bucket, prefix) {
+  const pointer = await read(bucket, prefix + "latest.json");
+  let metadata =
+    pointer &&
+    (await read(bucket, submissionKey(prefix, pointer.id) + ".json"));
+  if (!metadata || (await bucket.get(deletedKey(prefix, metadata.id)))) {
+    metadata = null;
+    for await (const { value } of records(bucket, prefix + "submissions/")) {
+      if (
+        (!metadata || value.createdAt > metadata.createdAt) &&
+        !(await bucket.get(deletedKey(prefix, value.id)))
+      ) {
+        metadata = value;
+      }
+    }
+  }
+  if (!metadata) return null;
+  const { id, notebookId, pageId, createdAt, subject } = metadata;
+  return { id, notebookId, pageId, createdAt, subject };
+}
+
+async function deletePageCopies(bucket, prefix, pageId, submissionIds) {
+  const ids = new Set(submissionIds);
+  for await (const { value } of records(bucket, prefix + "submissions/")) {
+    if (value.pageId === pageId) ids.add(value.id);
+    else ids.delete(value.id);
+  }
+  for (const id of ids) {
+    await put(bucket, deletedKey(prefix, id), true);
+    const key = submissionKey(prefix, id);
+    await bucket.delete(key + ".json");
+    await bucket.delete(key + ".png");
+  }
+  for await (const { key, value } of records(bucket, prefix + "events/")) {
+    if (value.type === "response" && value.pageId === pageId)
+      await bucket.delete(key);
+  }
+  const latest = await read(bucket, prefix + "latest.json");
+  if (ids.has(latest?.id)) await bucket.delete(prefix + "latest.json");
+}
+
 const prefixFor = (request) => {
   const id = request.headers.get("oai-authenticated-user-id");
   if (!id) throw new Error("AUTH_REQUIRED");
@@ -124,20 +182,13 @@ async function limitedBody(request, max) {
   }
   return buffer;
 }
+const eventKey = (prefix, { createdAt, id }) =>
+  prefix + "events/" + String(createdAt).padStart(13, "0") + "-" + id + ".json";
 async function event(bucket, prefix, payload) {
   const createdAt = Date.now(),
     id = crypto.randomUUID();
   const result = { ...payload, id, createdAt };
-  await put(
-    bucket,
-    prefix +
-      "events/" +
-      String(createdAt).padStart(13, "0") +
-      "-" +
-      id +
-      ".json",
-    result,
-  );
+  await put(bucket, eventKey(prefix, result), result);
   return result;
 }
 async function pendingEvents(bucket, prefix, after) {
@@ -202,7 +253,7 @@ async function rpc(request, env) {
       name = message.params?.name;
     if (name === "inkloop_get_workspace") {
       const workspace = await read(bucket, prefix + "workspace.json");
-      const latest = await read(bucket, prefix + "latest.json");
+      const latest = await latestSubmission(bucket, prefix);
       return reply({
         content: [
           {
@@ -213,18 +264,17 @@ async function rpc(request, env) {
       });
     }
     if (name === "inkloop_read_submission") {
-      const latest = await read(bucket, prefix + "latest.json"),
-        id = args.submission_id || latest?.id;
+      const id =
+        args.submission_id || (await latestSubmission(bucket, prefix))?.id;
       if (!validId(id))
         throw new Error(
           "Noch keine Abgabe vorhanden. Öffne Inkloop und tippe auf „Antwort abgeben“.",
         );
-      const metadata = await read(
-          bucket,
-          prefix + "submissions/" + id + ".json",
-        ),
-        image = await bucket.get(prefix + "submissions/" + id + ".png");
-      if (!metadata || !image) throw new Error("Abgabe nicht gefunden.");
+      const key = submissionKey(prefix, id);
+      const metadata = await read(bucket, key + ".json");
+      const image = await bucket.get(key + ".png");
+      if (!metadata || !image || (await bucket.get(deletedKey(prefix, id))))
+        throw new Error("Abgabe nicht gefunden.");
       const bytes = new Uint8Array(await image.arrayBuffer());
       let binary = "";
       for (let i = 0; i < bytes.length; i += 8192)
@@ -246,9 +296,12 @@ async function rpc(request, env) {
         throw new Error("Ungültige Antwortfelder.");
       const metadata = await read(
         bucket,
-        prefix + "submissions/" + args.submission_id + ".json",
+        submissionKey(prefix, args.submission_id) + ".json",
       );
-      if (!metadata)
+      if (
+        !metadata ||
+        (await bucket.get(deletedKey(prefix, args.submission_id)))
+      )
         throw new Error(
           "Abgabe nicht gefunden. Lies zuerst die richtige Abgabe.",
         );
@@ -261,6 +314,10 @@ async function rpc(request, env) {
         feedback: args.feedback,
         nextTask: args.next_task || "",
       });
+      if (await bucket.get(deletedKey(prefix, args.submission_id))) {
+        await bucket.delete(eventKey(prefix, result));
+        throw new Error("Diese Abgabe wurde gelöscht.");
+      }
       return reply({
         content: [
           {
@@ -358,6 +415,23 @@ async function api(request, env) {
     await put(bucket, prefix + "workspace.json", value);
     return json({ ok: true });
   }
+  if (
+    request.method === "DELETE" &&
+    url.pathname.startsWith("/api/bridge/page/")
+  ) {
+    const pageId = url.pathname.slice("/api/bridge/page/".length);
+    const value = JSON.parse(
+      new TextDecoder().decode(await limitedBody(request, 500000)),
+    );
+    if (
+      !validId(pageId) ||
+      !Array.isArray(value?.submissionIds) ||
+      !value.submissionIds.every(validId)
+    )
+      return json({ error: "Ungültige Seite oder Abgaben." }, 400);
+    await deletePageCopies(bucket, prefix, pageId, value.submissionIds);
+    return json({ ok: true });
+  }
   if (request.method === "POST" && url.pathname === "/api/bridge/submission") {
     const buffer = await limitedBody(request, 12_000_000);
     const form = await new Response(buffer, {
@@ -378,6 +452,7 @@ async function api(request, env) {
       !validId(metadata.id) ||
       !validId(metadata.notebookId) ||
       !validId(metadata.pageId) ||
+      !Number.isFinite(metadata.createdAt) ||
       !text(metadata.prompt, 210000) ||
       !text(metadata.task) ||
       !text(metadata.subject, 150) ||
@@ -393,23 +468,34 @@ async function api(request, env) {
       bytes[3] !== 71
     )
       return json({ error: "Ungültiges PNG." }, 400);
-    await bucket.put(
-      prefix + "submissions/" + metadata.id + ".png",
-      imageBytes,
-      { httpMetadata: { contentType: "image/png" } },
-    );
-    await put(
-      bucket,
-      prefix + "submissions/" + metadata.id + ".json",
-      metadata,
-    );
-    await put(bucket, prefix + "latest.json", {
-      id: metadata.id,
-      notebookId: metadata.notebookId,
-      pageId: metadata.pageId,
-      createdAt: metadata.createdAt,
-      subject: metadata.subject,
+    const key = submissionKey(prefix, metadata.id);
+    const tombstone = deletedKey(prefix, metadata.id);
+    if (await bucket.get(tombstone))
+      return json({ error: "Diese Abgabe wurde gelöscht." }, 409);
+    const existing = await read(bucket, key + ".json");
+    if (
+      existing &&
+      (existing.pageId !== metadata.pageId ||
+        existing.notebookId !== metadata.notebookId)
+    )
+      return json({ error: "Die Abgabe gehört zu einer anderen Seite." }, 409);
+    await bucket.put(key + ".png", imageBytes, {
+      onlyIf: firstWrite,
+      httpMetadata: { contentType: "image/png" },
     });
+    const created = await bucket.put(key + ".json", JSON.stringify(metadata), {
+      onlyIf: firstWrite,
+      httpMetadata: { contentType: "application/json" },
+    });
+    if (created) await put(bucket, prefix + "latest.json", { id: metadata.id });
+    if (await bucket.get(tombstone)) {
+      await bucket.delete(key + ".json");
+      await bucket.delete(key + ".png");
+      const latest = await read(bucket, prefix + "latest.json");
+      if (latest?.id === metadata.id)
+        await bucket.delete(prefix + "latest.json");
+      return json({ error: "Diese Abgabe wurde gelöscht." }, 409);
+    }
     return json({ ok: true, id: metadata.id });
   }
   return json({ error: "Not found" }, 404);

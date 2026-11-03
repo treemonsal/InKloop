@@ -438,6 +438,7 @@ test("plugin responses arrive automatically and new tasks preserve an existing h
     saved = (await loadData())!;
     assert.equal(saved.notebooks[0].pages.length, 2);
     assert.equal(saved.notebooks[0].pages[1].task, "Solve x² = 16.");
+    assert.equal(saved.activePage, page.id);
     assert.equal(saved.notebooks[0].pages[0].strokes.length, 1);
     assert.equal(saved.notebooks[0].language, "en");
     assert.equal(saved.bridgeCursor, "cursor-two");
@@ -447,6 +448,111 @@ test("plugin responses arrive automatically and new tasks preserve an existing h
     });
     host.remove();
     globalThis.fetch = originalFetch;
+    await window.happyDOM.abort();
+  }
+});
+
+test("an offline submission can be sent later without creating a duplicate", async () => {
+  const d = initialData();
+  d.onboardingDone = true;
+  const book = d.notebooks[1];
+  const page = book.pages[0];
+  d.activeNotebook = book.id;
+  d.activePage = page.id;
+  page.task = "Büromaterial für CHF 120 auf Rechnung kaufen.";
+  page.strokes = [
+    {
+      id: "ink-retry",
+      tool: "pen",
+      color: "#eee9df",
+      width: 2.5,
+      points: [{ x: 5, y: 5, p: 0.5 }],
+    },
+  ];
+  await saveData(d);
+  const originalFetch = globalThis.fetch;
+  const originalFormData = globalThis.FormData;
+  globalThis.FormData = window.FormData as unknown as typeof FormData;
+  let uploadedId: string | undefined;
+  let online = false;
+  let returnFeedback = false;
+  globalThis.fetch = (async (input, init) => {
+    if (!online) throw new Error("offline");
+    const path = String(input);
+    if (path.endsWith("/submission")) {
+      uploadedId = JSON.parse(
+        String((init?.body as FormData).get("metadata")),
+      ).id;
+    }
+    const events =
+      returnFeedback && path.endsWith("after=")
+        ? [
+            {
+              type: "response",
+              id: "feedback-event",
+              createdAt: 1,
+              notebookId: book.id,
+              pageId: page.id,
+              submissionId: uploadedId,
+              transcription:
+                "| Soll | Haben | Betrag |\n| --- | --- | --- |\n| Büromaterial | Kreditoren | 120 |",
+              feedback: "Soll und Haben stimmen.",
+            },
+          ]
+        : [];
+    return Response.json({
+      ok: true,
+      events,
+      cursor: events.length ? "feedback-cursor" : "",
+    });
+  }) as typeof fetch;
+  const host = document.body.appendChild(document.createElement("div"));
+  const app = createRoot(host);
+  try {
+    await act(async () => {
+      app.render(<App />);
+    });
+    await act(async () => {
+      await delay(80);
+    });
+    await click("Antwort abgeben");
+    await act(async () => {
+      await delay(400);
+    });
+    const local = (await loadData())!.notebooks[1].pages[0].submissions[0];
+    assert.equal(uploadedId, undefined);
+    await click("Schließen");
+    online = true;
+    await click("Erneut an ChatGPT senden");
+    await act(async () => {
+      await delay(400);
+    });
+    const submissions = (await loadData())!.notebooks[1].pages[0].submissions;
+    assert.equal(uploadedId, local.id);
+    assert.equal(submissions.length, 1);
+    assert.equal(submissions[0].handoff?.sent, true);
+    assert.equal(submissions[0].handoff?.subject, "FRW");
+    await click("Schließen");
+    returnFeedback = true;
+    await act(async () => {
+      window.dispatchEvent(new window.Event("focus"));
+      await delay(30);
+    });
+    await act(async () => {
+      await delay(450);
+    });
+    const updated = (await loadData())!.notebooks[1].pages[0].submissions;
+    assert.equal(updated.length, 1);
+    assert.equal(updated[0].id, local.id);
+    assert.equal(updated[0].feedback, "Soll und Haben stimmen.");
+    assert.match(updated[0].transcription, /Kreditoren/);
+  } finally {
+    await act(async () => {
+      app.unmount();
+    });
+    host.remove();
+    globalThis.fetch = originalFetch;
+    globalThis.FormData = originalFormData;
     await window.happyDOM.abort();
   }
 });

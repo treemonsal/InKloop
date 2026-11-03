@@ -24,6 +24,12 @@ export type Submission = {
   transcription: string;
   feedback: string;
   nextTask: string;
+  handoff?: {
+    subject: string;
+    language: Notebook["language"];
+    samples: Sample[];
+    sent: boolean;
+  };
 };
 export type Notebook = {
   id: string;
@@ -60,6 +66,29 @@ export function newPage(title = "Neue Seite"): Page {
     paper: "grid",
     updatedAt: Date.now(),
     submissions: [],
+  };
+}
+export function receiveTask(
+  data: AppData,
+  notebookId: string,
+  eventId: string,
+  task: string,
+  language?: Notebook["language"],
+): AppData {
+  const target = data.notebooks.find((n) => n.id === notebookId);
+  if (!target || target.pages.some((p) => p.id === eventId)) return data;
+  const page = {
+    ...newPage(`Seite ${target.pages.length + 1}`),
+    id: eventId,
+    task,
+  };
+  return {
+    ...data,
+    notebooks: data.notebooks.map((n) =>
+      n === target
+        ? { ...n, language: language || n.language, pages: [...n.pages, page] }
+        : n,
+    ),
   };
 }
 export function newNotebook(
@@ -147,15 +176,14 @@ export function eraseAt(strokes: Stroke[], p: Point, radius: number) {
 }
 const record = (x: unknown): x is Record<string, unknown> =>
   !!x && typeof x === "object" && !Array.isArray(x);
-const string = (x: unknown, max = 200000): x is string =>
+export const MAX_TEXT_LENGTH = 200_000;
+const string = (x: unknown, max = MAX_TEXT_LENGTH): x is string =>
   typeof x === "string" && x.length <= max;
 const finite = (x: unknown): x is number =>
   typeof x === "number" && Number.isFinite(x);
-const list = (x: unknown, max: number): x is unknown[] =>
-  Array.isArray(x) && x.length <= max;
 function validStrokes(x: unknown): x is Stroke[] {
   return (
-    list(x, 30000) &&
+    Array.isArray(x) &&
     x.every(
       (s) =>
         record(s) &&
@@ -166,7 +194,7 @@ function validStrokes(x: unknown): x is Stroke[] {
         finite(s.width) &&
         s.width > 0 &&
         s.width <= 40 &&
-        list(s.points, 100000) &&
+        Array.isArray(s.points) &&
         s.points.length > 0 &&
         s.points.every(
           (p) =>
@@ -191,25 +219,44 @@ function validSubmission(s: unknown): s is Submission {
     finite(s.createdAt) &&
     validStrokes(s.strokes) &&
     string(s.task) &&
-    string(s.transcription) &&
+    typeof s.transcription === "string" &&
     string(s.feedback) &&
-    string(s.nextTask)
+    string(s.nextTask) &&
+    (s.handoff === undefined ||
+      (record(s.handoff) &&
+        string(s.handoff.subject, 150) &&
+        (s.handoff.language === "de" || s.handoff.language === "en") &&
+        typeof s.handoff.sent === "boolean" &&
+        Array.isArray(s.handoff.samples) &&
+        s.handoff.samples.length <= 50 &&
+        s.handoff.samples.every(validSample)))
   );
 }
-export function parseBackup(raw: string, maxSize = 40_000_000): AppData {
+function validSample(s: unknown): s is Sample {
+  return (
+    record(s) &&
+    string(s.id, 100) &&
+    string(s.label, 1000) &&
+    validStrokes(s.strokes)
+  );
+}
+export function parseBackup(raw: string, maxSize = Infinity): AppData {
   if (raw.length > maxSize)
-    throw new Error("Die Sicherung ist zu groß (maximal 40 MB).");
-  let d: unknown;
+    throw new Error("Die Sicherung überschreitet die erlaubte Grösse.");
+  let value: unknown;
   try {
-    d = JSON.parse(raw);
+    value = JSON.parse(raw);
   } catch {
     throw new Error("Diese Datei ist keine gültige Inkloop-Sicherung.");
   }
+  return validateData(value);
+}
+export function validateData(d: unknown): AppData {
   if (
     !record(d) ||
     d.version !== 1 ||
     (d.bridgeCursor !== undefined && !string(d.bridgeCursor, 100)) ||
-    !list(d.notebooks, 200) ||
+    !Array.isArray(d.notebooks) ||
     !d.notebooks.length ||
     !string(d.activeNotebook, 100) ||
     !string(d.activePage, 100) ||
@@ -218,7 +265,8 @@ export function parseBackup(raw: string, maxSize = 40_000_000): AppData {
     !["chatgpt", "claude"].includes(d.settings.provider as string) ||
     typeof d.settings.touchWriting !== "boolean" ||
     typeof d.settings.includeProfile !== "boolean" ||
-    !list(d.samples, 50)
+    !Array.isArray(d.samples) ||
+    d.samples.length > 50
   )
     throw new Error("Die Sicherung hat ein unbekanntes Format.");
   const ids = new Set<string>();
@@ -258,7 +306,7 @@ export function parseBackup(raw: string, maxSize = 40_000_000): AppData {
               return false;
             }
           })()) &&
-        list(n.pages, 1000) &&
+        Array.isArray(n.pages) &&
         n.pages.length > 0 &&
         n.pages.every(
           (p) =>
@@ -270,22 +318,13 @@ export function parseBackup(raw: string, maxSize = 40_000_000): AppData {
             validStrokes(p.strokes) &&
             ["grid", "ruled", "dots", "blank"].includes(p.paper as string) &&
             finite(p.updatedAt) &&
-            list(p.submissions, 500) &&
+            Array.isArray(p.submissions) &&
             p.submissions.every((s) => validSubmission(s) && unique(s.id)),
         ),
     )
   )
     throw new Error("Die Sicherung enthält ungültige Lernhefte oder Seiten.");
-  if (
-    !d.samples.every(
-      (s) =>
-        record(s) &&
-        string(s.id, 100) &&
-        unique(s.id) &&
-        string(s.label, 1000) &&
-        validStrokes(s.strokes),
-    )
-  )
+  if (!d.samples.every((s) => validSample(s) && unique(s.id)))
     throw new Error("Die Handschriftreferenzen sind ungültig.");
   const result = d as unknown as AppData;
   const active = result.notebooks.find((n) => n.id === result.activeNotebook);
@@ -298,7 +337,7 @@ export function parseResponse(raw: string): {
   feedback: string;
   nextTask: string;
 } {
-  if (raw.length > 200000) throw new Error("Die Antwort ist zu lang.");
+  if (raw.length > MAX_TEXT_LENGTH) throw new Error("Die Antwort ist zu lang.");
   const clean = raw
     .trim()
     .replace(/^```(?:json)?\s*/i, "")

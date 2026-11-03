@@ -51,6 +51,7 @@ import {
   bridgeStatus,
   publishWorkspace,
   publishSubmission,
+  deleteSharedPage,
   type BridgeEvent,
 } from "./bridge";
 import InkCanvas, { type Tool } from "./Canvas";
@@ -69,6 +70,8 @@ import {
   buildPrompt,
   parseBackup,
   parseResponse,
+  receiveTask,
+  MAX_TEXT_LENGTH,
 } from "./model";
 import { loadData, saveData, readStoredData, download } from "./storage";
 import { submissionImage, thumbnail } from "./ink";
@@ -240,6 +243,7 @@ export default function App() {
     [historyVersion, setHistoryVersion] = useState(0),
     channel = useRef<BroadcastChannel | null>(null);
   const importFile = useRef<HTMLInputElement>(null);
+  const restoreCandidate = useRef<AppData | null>(null);
   const notify = useCallback((message: string) => {
     setToast(message);
     clearTimeout(toastTimer.current);
@@ -369,37 +373,14 @@ export default function App() {
                   : n,
               ),
             };
-          if (event.type === "task" && event.task) {
-            const target = next.notebooks.find(
-              (n) => n.id === event.notebookId,
+          if (event.type === "task" && event.task)
+            next = receiveTask(
+              next,
+              event.notebookId,
+              event.id,
+              event.task,
+              event.language,
             );
-            if (!target) continue;
-            const active =
-              target.pages.find((p) => p.id === next.activePage) ||
-              target.pages.at(-1)!;
-            const p = active.strokes.length
-              ? {
-                  ...newPage(`Seite ${target.pages.length + 1}`),
-                  task: event.task,
-                }
-              : { ...active, task: event.task, updatedAt: Date.now() };
-            next = {
-              ...next,
-              activePage:
-                next.activeNotebook === target.id ? p.id : next.activePage,
-              notebooks: next.notebooks.map((n) =>
-                n.id === target.id
-                  ? {
-                      ...n,
-                      language: event.language || n.language,
-                      pages: active.strokes.length
-                        ? [...n.pages, p]
-                        : n.pages.map((old) => (old.id === p.id ? p : old)),
-                    }
-                  : n,
-              ),
-            };
-          }
         }
         return { ...next, bridgeCursor: cursor };
       });
@@ -409,10 +390,6 @@ export default function App() {
       if (activeResponse) {
         setSelectedSubmission(activeResponse.submissionId || null);
         setTab("feedback");
-        setPanelOpen(true);
-      }
-      if (events.some((e) => e.type === "task")) {
-        setTab("task");
         setPanelOpen(true);
       }
       notify(
@@ -567,6 +544,7 @@ export default function App() {
   const close = () => {
     if (busy) return;
     setSheet(null);
+    restoreCandidate.current = null;
     setError("");
     if (sheet === "submit") setPrepared(null);
   };
@@ -612,48 +590,161 @@ export default function App() {
       );
     }
   };
-  const prepareSubmission = async () => {
-    if (!data || !notebook || !page || !page.strokes.length || busy) return;
+  const showHandoff = async (
+    n: Notebook,
+    pageId: string,
+    submission: Submission,
+    handoff: NonNullable<Submission["handoff"]>,
+    send: boolean,
+  ) => {
+    if (!data || busy || externalEdit) return;
     setBusy(true);
     setError("");
     try {
-      const s: Submission = {
-        id: uid(),
-        createdAt: Date.now(),
-        strokes: structuredClone(page.strokes),
-        task: page.task,
-        transcription: "",
-        feedback: "",
-        nextTask: "",
+      const source = {
+        ...n,
+        subject: handoff.subject,
+        language: handoff.language,
       };
-      const blob = await submissionImage(notebook, s, data);
-      const prompt = buildPrompt(
-        notebook,
-        s,
-        data.settings.includeProfile ? data.samples.length : 0,
-      );
-      patchPage({ submissions: [...page.submissions, s] });
-      let shared = false;
-      if (bridgeReady && data.settings.provider === "chatgpt") {
+      const blob = await submissionImage(source, submission, handoff.samples);
+      const prompt = buildPrompt(source, submission, handoff.samples.length);
+      let shared = handoff.sent;
+      if (send) {
         try {
-          await publishSubmission(notebook, page.id, s, blob, prompt);
+          await publishSubmission(source, pageId, submission, blob, prompt);
           shared = true;
+          setData(
+            (d) =>
+              d && {
+                ...d,
+                notebooks: d.notebooks.map((book) =>
+                  book.id === n.id
+                    ? {
+                        ...book,
+                        pages: book.pages.map((p) =>
+                          p.id === pageId
+                            ? {
+                                ...p,
+                                submissions: p.submissions.map((s) =>
+                                  s.id === submission.id
+                                    ? {
+                                        ...s,
+                                        handoff: { ...handoff, sent: true },
+                                      }
+                                    : s,
+                                ),
+                              }
+                            : p,
+                        ),
+                      }
+                    : book,
+                ),
+              },
+          );
         } catch {
-          notify("Plugin nicht erreichbar. Bildübergabe bleibt verfügbar.");
+          notify(
+            "Senden fehlgeschlagen. Du kannst es bei dieser Abgabe erneut versuchen.",
+          );
         }
       }
-      setPrepared({
-        blob,
-        url: URL.createObjectURL(blob),
-        prompt,
-        submission: s,
-        shared,
-      });
-      setSelectedSubmission(s.id);
-      setSheet("submit");
+      if (current.current?.activePage === pageId) {
+        setPrepared({
+          blob,
+          url: URL.createObjectURL(blob),
+          prompt,
+          submission,
+          shared,
+        });
+        setSelectedSubmission(submission.id);
+        setSheet("submit");
+      }
     } catch (e) {
       notify(
-        e instanceof Error ? e.message : "Abgabe konnte nicht erstellt werden.",
+        e instanceof Error
+          ? e.message
+          : "Das Abgabebild konnte nicht erstellt werden.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+  const prepareSubmission = () => {
+    if (
+      !data ||
+      !notebook ||
+      !page ||
+      !page.strokes.length ||
+      busy ||
+      externalEdit
+    )
+      return;
+    const handoff = {
+      subject: notebook.subject,
+      language: notebook.language,
+      samples: data.settings.includeProfile ? data.samples : [],
+      sent: false,
+    };
+    const s: Submission = {
+      id: uid(),
+      createdAt: Date.now(),
+      strokes: structuredClone(page.strokes),
+      task: page.task,
+      transcription: "",
+      feedback: "",
+      nextTask: "",
+      handoff,
+    };
+    patchPage({ submissions: [...page.submissions, s] });
+    void showHandoff(
+      notebook,
+      page.id,
+      s,
+      handoff,
+      bridgeReady && data.settings.provider === "chatgpt",
+    );
+  };
+  const deletePage = async (includeServer: boolean) => {
+    if (!notebook || !page || busy || externalEdit) return;
+    setBusy(true);
+    setError("");
+    try {
+      if (includeServer) {
+        await deleteSharedPage(
+          page.id,
+          page.submissions.map((s) => s.id),
+        );
+      }
+      setData((d) => {
+        if (!d) return d;
+        const target = d.notebooks.find((n) => n.id === notebook.id);
+        if (!target) return d;
+        const index = target.pages.findIndex((p) => p.id === page.id);
+        if (index < 0) return d;
+        const pages = target.pages.filter((p) => p.id !== page.id);
+        if (!pages.length) pages.push(newPage("Seite 1"));
+        return {
+          ...d,
+          activePage:
+            d.activePage === page.id
+              ? pages[Math.max(0, index - 1)].id
+              : d.activePage,
+          notebooks: d.notebooks.map((n) =>
+            n === target ? { ...n, pages } : n,
+          ),
+        };
+      });
+      history.current.delete(page.id);
+      setSelectedSubmission(null);
+      setZoom(1);
+      close();
+      notify(
+        includeServer
+          ? "Seite und Serverkopien gelöscht."
+          : "Seite auf diesem Gerät gelöscht.",
+      );
+    } catch {
+      setError(
+        "Serverkopien konnten nicht vollständig gelöscht werden. Die Seite bleibt hier. Versuche es erneut.",
       );
     } finally {
       setBusy(false);
@@ -700,11 +791,8 @@ export default function App() {
     if (!file) return;
     setError("");
     try {
-      if (file.size > 40_000_000)
-        throw new Error("Die Sicherung ist zu groß (maximal 40 MB).");
-      const imported = parseBackup(await file.text());
-      setDraft(JSON.stringify(imported));
-      open("settings", JSON.stringify(imported));
+      restoreCandidate.current = parseBackup(await file.text());
+      open("settings");
       setError("restore-confirm");
     } catch (e) {
       notify((e as Error).message);
@@ -1255,9 +1343,15 @@ export default function App() {
                         <summary>Abschrift korrigieren</summary>
                         <textarea
                           aria-label="Abschrift korrigieren"
+                          maxLength={MAX_TEXT_LENGTH}
                           value={submission.transcription}
                           onChange={(e) =>
-                            editSubmission({ transcription: e.target.value })
+                            editSubmission({
+                              transcription: e.target.value.slice(
+                                0,
+                                MAX_TEXT_LENGTH,
+                              ),
+                            })
                           }
                         />
                         <small>Deine Korrektur wird lokal gespeichert.</small>
@@ -1350,6 +1444,39 @@ export default function App() {
                         </option>
                       ))}
                     </select>
+                    {submission && data.settings.provider === "chatgpt" && (
+                      <>
+                        <small>
+                          {submission.handoff?.sent
+                            ? "Für ChatGPT bereitgestellt"
+                            : submission.handoff
+                              ? "Lokal gespeichert"
+                              : "Sendestatus unbekannt"}
+                        </small>
+                        <button
+                          className="text-button small"
+                          disabled={busy}
+                          onClick={() =>
+                            void showHandoff(
+                              notebook,
+                              page.id,
+                              submission,
+                              submission.handoff ?? {
+                                subject: notebook.subject,
+                                language: notebook.language,
+                                samples: [],
+                                sent: false,
+                              },
+                              !submission.handoff?.sent,
+                            )
+                          }
+                        >
+                          {submission.handoff?.sent
+                            ? "Übergabe öffnen"
+                            : "Erneut an ChatGPT senden"}
+                        </button>
+                      </>
+                    )}
                     <button
                       className="text-button small"
                       onClick={() => open("import")}
@@ -1655,7 +1782,7 @@ export default function App() {
             className="large-textarea"
             placeholder="Aufgabe hier einfügen …"
             value={draft}
-            maxLength={200000}
+            maxLength={MAX_TEXT_LENGTH}
             onChange={(e) => setDraft(e.target.value)}
           />
           <button
@@ -1887,7 +2014,7 @@ export default function App() {
               '{"transcription": "…", "feedback": "…", "next_task": "…"}'
             }
             value={draft}
-            maxLength={200000}
+            maxLength={MAX_TEXT_LENGTH}
             onChange={(e) => setDraft(e.target.value)}
           />
           {error && <p className="inline-error">{error}</p>}
@@ -1922,8 +2049,8 @@ export default function App() {
                 className="primary full"
                 onClick={() => {
                   try {
-                    const restored = parseBackup(draft);
-                    setData(restored);
+                    if (!restoreCandidate.current) return;
+                    setData(restoreCandidate.current);
                     history.current.clear();
                     setSelectedSubmission(null);
                     close();
@@ -2109,10 +2236,7 @@ export default function App() {
                   feedback: "",
                   nextTask: "",
                 };
-                const b = await submissionImage(notebook, s, {
-                  ...data,
-                  settings: { ...data.settings, includeProfile: false },
-                });
+                const b = await submissionImage(notebook, s, []);
                 download(b, fileName);
                 close();
               } catch (e) {
@@ -2147,27 +2271,27 @@ export default function App() {
             <summary>
               <Trash2 size={16} /> Seite löschen
             </summary>
-            <p>Diese Seite mit allen Abgaben endgültig löschen?</p>
-            <button
-              className="danger-button"
-              onClick={() => {
-                if (notebook.pages.length === 1) {
-                  const p = newPage("Seite 1");
-                  patchNotebook({ pages: [p] });
-                  navigatePage(p.id);
-                } else {
-                  patchNotebook({
-                    pages: notebook.pages.filter((p) => p.id !== page.id),
-                  });
-                  navigatePage(
-                    notebook.pages[pageIndex === 0 ? 1 : pageIndex - 1].id,
-                  );
-                }
-                close();
-              }}
-            >
-              Seite endgültig löschen
-            </button>
+            <p>
+              Beim lokalen Löschen bleiben bereits geteilte Bilder und
+              Rückmeldungen auf dem Server verfügbar. Beide Kopien zu löschen
+              erfordert eine Verbindung.
+            </p>
+            <div className="button-row">
+              <button
+                className="secondary"
+                disabled={busy}
+                onClick={() => void deletePage(false)}
+              >
+                Nur auf diesem Gerät löschen
+              </button>
+              <button
+                className="danger-button"
+                disabled={busy}
+                onClick={() => void deletePage(true)}
+              >
+                Seite und Serverkopien löschen
+              </button>
+            </div>
           </details>
           {error && <p className="inline-error">{error}</p>}
         </Modal>
