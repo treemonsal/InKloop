@@ -19,7 +19,6 @@ const window = new Window({
   width: 1280,
   height: 800,
 });
-Object.defineProperty(window, "devicePixelRatio", { value: 2 });
 window.document.write("<!doctype html><html><head></head><body></body></html>");
 Object.defineProperty(window.document, "compatMode", {
   value: "CSS1Compat",
@@ -66,7 +65,6 @@ Object.defineProperty(globalThis, "BroadcastChannel", {
 const no = () => {};
 const ctx = {
   clearRect: no,
-  setTransform: no,
   save: no,
   restore: no,
   beginPath: no,
@@ -386,7 +384,27 @@ test("four handwriting references replace the profile only after completion and 
       'dialog [data-testid="ink-canvas"]',
     )!;
     assert.equal(canvas.style.touchAction, "none");
-    assert.equal(canvas.width, 1800);
+    assert.equal(
+      canvas.parentElement
+        ?.querySelector("svg.paper-ink")
+        ?.getAttribute("viewBox"),
+      "0 0 900 1200",
+    );
+    const selection = new window.Event("selectstart", {
+      bubbles: true,
+      cancelable: true,
+    });
+    canvas.dispatchEvent(selection);
+    assert.equal(selection.defaultPrevented, true);
+    const stylus = new window.Event("touchstart", {
+      bubbles: true,
+      cancelable: true,
+    });
+    Object.defineProperty(stylus, "changedTouches", {
+      value: [{ identifier: 31, target: canvas, touchType: "stylus" }],
+    });
+    canvas.dispatchEvent(stylus);
+    assert.equal(stylus.defaultPrevented, true);
     await act(async () => {
       for (const [type, x, pointerType] of [
         ["pointerdown", 80, "touch"],
@@ -408,6 +426,11 @@ test("four handwriting references replace the profile only after completion and 
           }),
         );
     });
+    assert.ok(
+      canvas.parentElement
+        ?.querySelector("svg.paper-ink g path")
+        ?.getAttribute("d"),
+    );
     await click(step === 3 ? "Schriftprofil speichern" : "Nächste Probe");
   }
   await act(async () => {
@@ -695,6 +718,8 @@ test("the library opens first and each notebook remembers its last page", async 
         await delay(400);
       });
     };
+    await swipe(-90);
+    assert.ok(document.body.textContent?.includes("Letzte Seite"));
     await swipe(90, true);
     const afterSwipe = (await loadData())!;
     assert.equal(afterSwipe.activePage, afterSwipe.notebooks[0].pages[0].id);
@@ -718,6 +743,7 @@ test("the library opens first and each notebook remembers its last page", async 
       sendTouches("touchstart", [
         makeTouch(5, 200, 160),
         makeTouch(6, 250, 160),
+        makeTouch(7, 410, 175),
       ]);
       sendTouches("touchmove", [
         makeTouch(5, 201, 166),

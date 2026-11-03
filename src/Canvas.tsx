@@ -7,7 +7,7 @@ import {
   type Stroke,
   type Paper,
 } from "./model";
-import { PAGE_H, PAGE_W, drawStroke, renderInk } from "./ink";
+import { PAGE_H, PAGE_W, paintSvgStroke } from "./ink";
 type PaperTouch = Touch & { touchType?: "direct" | "stylus" };
 type Contact = {
   x: number;
@@ -44,7 +44,9 @@ export default function InkCanvas({
   disabled = false,
 }: Props) {
   const canvas = useRef<HTMLCanvasElement>(null),
-    committedCanvas = useRef<HTMLCanvasElement>(null),
+    committedLayer = useRef<SVGGElement>(null),
+    committedPaths = useRef(new Map<Stroke, SVGPathElement>()),
+    previewPath = useRef<SVGPathElement>(null),
     painted = useRef<Stroke[] | null>(null),
     live = useRef<Stroke | null>(null),
     eraserPoint = useRef<Point | null>(null),
@@ -53,7 +55,7 @@ export default function InkCanvas({
     pointerType = useRef(""),
     touches = useRef(new Map<number, Contact>()),
     touchLocked = useRef(false),
-    touchEventsSeen = useRef(false),
+    nativeHandledPointers = useRef(false),
     nativePairActive = useRef(false),
     pointerScroll = useRef({ x: 0, y: 0 }),
     lastPenUp = useRef(-Infinity),
@@ -63,53 +65,34 @@ export default function InkCanvas({
   const change = useRef(onChange);
   change.current = onChange;
   const paint = () => {
-    if (committedCanvas.current && painted.current !== working.current) {
-      renderInk(committedCanvas.current, working.current);
+    const layer = committedLayer.current;
+    if (layer && painted.current !== working.current) {
+      const owner = layer.ownerDocument;
+      const fragment = owner.createDocumentFragment();
+      const nextPaths = new Map<Stroke, SVGPathElement>();
+      for (const stroke of working.current) {
+        let path = committedPaths.current.get(stroke);
+        if (!path) {
+          path = owner.createElementNS("http://www.w3.org/2000/svg", "path");
+          paintSvgStroke(path, stroke);
+        }
+        nextPaths.set(stroke, path);
+        fragment.append(path);
+      }
+      layer.replaceChildren(fragment);
+      committedPaths.current = nextPaths;
       painted.current = working.current;
     }
-    if (canvas.current)
-      renderInk(canvas.current, [], live.current || undefined);
+    if (previewPath.current) {
+      if (live.current) paintSvgStroke(previewPath.current, live.current);
+      else previewPath.current.removeAttribute("d");
+    }
   };
   useLayoutEffect(() => {
     base.current = strokes;
     working.current = strokes;
     paint();
   }, [strokes]);
-  useLayoutEffect(() => {
-    const front = canvas.current;
-    const back = committedCanvas.current;
-    if (!front || !back) return;
-
-    const resize = () => {
-      const { width } = front.getBoundingClientRect();
-      if (!width) return;
-      const scale = Math.max(
-        1,
-        Math.min(2.5, (width * window.devicePixelRatio) / PAGE_W),
-      );
-      const pixelsWide = Math.round(PAGE_W * scale);
-      const pixelsHigh = Math.round(PAGE_H * scale);
-      if (front.width === pixelsWide && front.height === pixelsHigh) return;
-      for (const layer of [front, back]) {
-        layer.width = pixelsWide;
-        layer.height = pixelsHigh;
-      }
-      painted.current = null;
-      paint();
-    };
-
-    resize();
-    const observer =
-      typeof ResizeObserver !== "undefined"
-        ? new ResizeObserver(resize)
-        : undefined;
-    observer?.observe(front);
-    window.addEventListener("resize", resize);
-    return () => {
-      observer?.disconnect();
-      window.removeEventListener("resize", resize);
-    };
-  }, []);
   useEffect(
     () => () => {
       cancelAnimationFrame(frame.current);
@@ -193,7 +176,7 @@ export default function InkCanvas({
     redraw();
   };
   const cancelFingerInk = () => {
-    if (pointerType.current !== "touch") return;
+    if (pointer.current === null || pointerType.current !== "touch") return;
     pointer.current = null;
     live.current = null;
     eraserPoint.current = null;
@@ -216,6 +199,7 @@ export default function InkCanvas({
           Math.min(e.width, e.height) > 42 ||
           (pointer.current !== null && pointerType.current !== "touch"),
       });
+      if (nativePairActive.current) nativeHandledPointers.current = true;
       const pair = fingers();
       if (pair.length >= 2) {
         cancelFingerInk();
@@ -298,82 +282,95 @@ export default function InkCanvas({
 
     const contacts = new Map<number, Contact>();
     let previous = { x: 0, y: 0 };
-    const pair = () =>
-      [...contacts.values()].filter((contact) => !contact.palm);
+    const movingPair = () =>
+      [...contacts.entries()]
+        .sort(
+          ([, a], [, b]) =>
+            Math.hypot(b.x - b.startX, b.y - b.startY) -
+            Math.hypot(a.x - a.startX, a.y - a.startY),
+        )
+        .slice(0, 2);
     const track = (event: TouchEvent) => {
       if (nativeGestures.current.disabled) return;
-      const changes = Array.from(
+      const localTouches = Array.from(
         event.changedTouches as ArrayLike<PaperTouch>,
       ).filter(
         (touch) =>
-          touch.touchType !== "stylus" &&
           touch.target instanceof window.Node &&
           scroller.contains(touch.target),
       );
+      if (!localTouches.length) return;
+      if (
+        (event.type === "touchstart" || event.type === "touchmove") &&
+        event.cancelable
+      )
+        event.preventDefault();
+      const changes = localTouches.filter(
+        (touch) => touch.touchType !== "stylus",
+      );
       if (!changes.length) return;
-      touchEventsSeen.current = true;
-      const oldPair = pair();
       const finished =
         event.type === "touchend" || event.type === "touchcancel";
       const penActive =
         pointer.current !== null && pointerType.current === "pen";
-      if (penActive)
-        for (const contact of contacts.values()) contact.palm = true;
-      let releasedFinger = false;
-      for (const touch of changes) {
-        const { identifier: id, clientX: x, clientY: y } = touch;
-        if (event.type === "touchstart") {
-          contacts.set(id, {
-            x,
-            y,
-            startX: x,
-            startY: y,
-            palm: penActive || Math.min(touch.radiusX, touch.radiusY) > 21,
-          });
-        }
+      for (const { identifier: id, clientX: x, clientY: y } of changes) {
+        if (event.type === "touchstart")
+          contacts.set(id, { x, y, startX: x, startY: y, palm: false });
         const contact = contacts.get(id);
         if (contact) {
           contact.x = x;
           contact.y = y;
         }
-        if (finished) {
-          if (contact && !contact.palm) releasedFinger = true;
-          contacts.delete(id);
-        }
       }
-      if (finished) {
-        if (
-          event.type === "touchend" &&
-          !penActive &&
-          releasedFinger &&
-          oldPair.length === 2
-        ) {
-          nativeGestures.current.turnPage(oldPair);
-        }
-        if (pair().length === 0) nativePairActive.current = false;
-        return;
-      }
-
-      const currentPair = pair();
-      if (event.type === "touchstart" && currentPair.length >= 2) {
-        nativePairActive.current = true;
-        nativeGestures.current.cancelFingerInk();
-        for (const contact of currentPair) {
+      if (penActive) {
+        for (const contact of contacts.values()) {
           contact.startX = contact.x;
           contact.startY = contact.y;
         }
         previous = { x: 0, y: 0 };
       }
-      if (event.type === "touchmove") {
-        if (event.cancelable) event.preventDefault();
-        if (!penActive && currentPair.length === 2)
-          nativeGestures.current.scrollWithFingers(
-            currentPair,
-            scroller,
-            previous,
-          );
+      if (finished) {
+        const pair = movingPair();
+        if (
+          event.type === "touchend" &&
+          !penActive &&
+          nativePairActive.current &&
+          pair.length === 2 &&
+          changes.some((t) => pair.some(([id]) => id === t.identifier))
+        ) {
+          nativeGestures.current.turnPage(pair.map(([, contact]) => contact));
+        }
+        for (const { identifier } of changes) contacts.delete(identifier);
+        if (!contacts.size) nativePairActive.current = false;
+        return;
+      }
+
+      if (
+        event.type === "touchstart" &&
+        !nativePairActive.current &&
+        contacts.size >= 2
+      ) {
+        nativePairActive.current = true;
+        nativeHandledPointers.current = touches.current.size > 0;
+        nativeGestures.current.cancelFingerInk();
+        for (const contact of contacts.values()) {
+          contact.startX = contact.x;
+          contact.startY = contact.y;
+        }
+        previous = { x: 0, y: 0 };
+      }
+      if (event.type === "touchmove" && !penActive && contacts.size >= 2) {
+        nativeGestures.current.scrollWithFingers(
+          movingPair().map(([, contact]) => contact),
+          scroller,
+          previous,
+        );
       }
     };
+    const preventSelection = (event: Event) => event.preventDefault();
+    const suppress = ["selectstart", "contextmenu", "dragstart"];
+    for (const name of suppress)
+      scroller.addEventListener(name, preventSelection);
     for (const name of [
       "touchstart",
       "touchmove",
@@ -382,6 +379,8 @@ export default function InkCanvas({
     ] as const)
       scroller.addEventListener(name, track, { passive: false });
     return () => {
+      for (const name of suppress)
+        scroller.removeEventListener(name, preventSelection);
       for (const name of [
         "touchstart",
         "touchmove",
@@ -405,7 +404,7 @@ export default function InkCanvas({
         const scroller = e.currentTarget.closest<HTMLElement>(
           ".paper-scroll, .sample-surface",
         );
-        if (scroller && !touchEventsSeen.current)
+        if (scroller && !nativeHandledPointers.current)
           scrollWithFingers(pair, scroller, pointerScroll.current);
         return;
       }
@@ -450,9 +449,12 @@ export default function InkCanvas({
       }
       const pair = fingers();
       touches.current.delete(e.pointerId);
+      const nativeOwnsGesture =
+        nativePairActive.current || nativeHandledPointers.current;
+      if (!touches.current.size) nativeHandledPointers.current = false;
       if (!fingers().length) touchLocked.current = false;
       if (
-        !touchEventsSeen.current &&
+        !nativeOwnsGesture &&
         e.type === "pointerup" &&
         released &&
         !released.palm &&
@@ -460,7 +462,7 @@ export default function InkCanvas({
       )
         turnPage(pair);
       if (
-        (nativePairActive.current || e.type !== "pointerup") &&
+        (nativeOwnsGesture || e.type !== "pointerup") &&
         pointer.current === e.pointerId
       )
         cancelFingerInk();
@@ -492,11 +494,6 @@ export default function InkCanvas({
         : draft;
     const result = stroke ? [...working.current, stroke] : working.current;
     const changed = result !== base.current;
-    const committed = committedCanvas.current?.getContext("2d");
-    if (stroke && committed && painted.current === working.current) {
-      drawStroke(committed, stroke);
-      painted.current = result;
-    }
     pointer.current = null;
     scratchStart.current = null;
     live.current = null;
@@ -514,17 +511,20 @@ export default function InkCanvas({
       style={{ width: `${zoom * 100}%` }}
     >
       <div className="paper-margin" />
-      <canvas
-        ref={committedCanvas}
-        width={PAGE_W}
-        height={PAGE_H}
-        className="committed-ink"
+      <svg
+        className="paper-ink"
+        viewBox={`0 0 ${PAGE_W} ${PAGE_H}`}
+        preserveAspectRatio="none"
         aria-hidden="true"
-      />
+      >
+        <g ref={committedLayer} />
+        <path ref={previewPath} />
+      </svg>
       <canvas
         ref={canvas}
-        width={PAGE_W}
-        height={PAGE_H}
+        width={1}
+        height={1}
+        draggable={false}
         aria-label={label}
         role="img"
         data-testid="ink-canvas"

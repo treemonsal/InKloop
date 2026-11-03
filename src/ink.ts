@@ -19,7 +19,14 @@ const colorMap: Record<string, string> = {
   "#a9bed7": "#315b88",
   "#c1acd6": "#704d91",
 };
-function traceCurve(ctx: CanvasRenderingContext2D, points: Point[]) {
+type PathWriter = Pick<
+  CanvasRenderingContext2D,
+  "moveTo" | "lineTo" | "quadraticCurveTo" | "closePath"
+> & {
+  circle(x: number, y: number, radius: number): void;
+};
+
+function traceCurve(ctx: PathWriter, points: Point[]) {
   if (points.length > 2) {
     const [first, second] = points;
     ctx.lineTo((first.x + second.x) / 2, (first.y + second.y) / 2);
@@ -37,18 +44,13 @@ function penRadius(point: Point, width: number) {
   return (width * (0.7 + 0.65 * point.p)) / 2;
 }
 
-function fillPenStroke(
-  ctx: CanvasRenderingContext2D,
-  points: Point[],
-  width: number,
-) {
+function fillPenStroke(ctx: PathWriter, points: Point[], width: number) {
   // Rounded discs and the connections between them share the same winding.
   // Even a tight curl can then overlap itself without cutting a hole in the ink.
   for (let i = 0; i < points.length; i++) {
     const point = points[i];
     const radius = penRadius(point, width);
-    ctx.moveTo(point.x + radius, point.y);
-    ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+    ctx.circle(point.x, point.y, radius);
 
     const next = points[i + 1];
     if (!next) break;
@@ -65,7 +67,31 @@ function fillPenStroke(
     ctx.lineTo(next.x + nx * nextRadius, next.y + ny * nextRadius);
     ctx.closePath();
   }
-  ctx.fill();
+}
+
+function traceStroke(path: PathWriter, stroke: Stroke) {
+  const points = stroke.tool === "pen" ? strokePath(stroke) : stroke.points;
+  if (!points.length || (stroke.tool === "marker" && points.length < 2)) return;
+  const first = points[0];
+  if (points.length === 1) {
+    path.circle(
+      first.x,
+      first.y,
+      stroke.tool === "pen" ? penRadius(first, stroke.width) : stroke.width / 2,
+    );
+    return "fill";
+  }
+  if (stroke.tool === "pen") {
+    fillPenStroke(path, points, stroke.width);
+    return "fill";
+  }
+  path.moveTo(first.x, first.y);
+  if (stroke.tool === "marker" && !stroke.flattened) {
+    traceCurve(path, stroke.points);
+  } else {
+    for (const point of points.slice(1)) path.lineTo(point.x, point.y);
+  }
+  return "stroke";
 }
 
 export function drawStroke(
@@ -73,8 +99,6 @@ export function drawStroke(
   stroke: Stroke,
   light = false,
 ) {
-  const points = stroke.tool === "pen" ? strokePath(stroke) : stroke.points;
-  if (!points.length || (stroke.tool === "marker" && points.length < 2)) return;
   ctx.save();
   ctx.lineCap = stroke.tool === "marker" ? "butt" : "round";
   ctx.lineJoin = "round";
@@ -85,38 +109,59 @@ export function drawStroke(
   ctx.globalAlpha = stroke.tool === "marker" ? 0.28 : 1;
   ctx.lineWidth = stroke.width;
   ctx.beginPath();
-
-  const first = points[0];
-  if (points.length === 1) {
-    const radius =
-      stroke.tool === "pen" ? penRadius(first, stroke.width) : stroke.width / 2;
-    ctx.arc(first.x, first.y, radius, 0, Math.PI * 2);
-    ctx.fill();
-  } else if (stroke.tool === "pen") {
-    fillPenStroke(ctx, points, stroke.width);
-  } else {
-    ctx.moveTo(first.x, first.y);
-    if (stroke.tool === "marker" && !stroke.flattened) {
-      traceCurve(ctx, stroke.points);
-    } else {
-      for (const point of points.slice(1)) ctx.lineTo(point.x, point.y);
-    }
-    ctx.stroke();
-  }
+  const paint = traceStroke(
+    {
+      moveTo: (x, y) => ctx.moveTo(x, y),
+      lineTo: (x, y) => ctx.lineTo(x, y),
+      quadraticCurveTo: (x, y, endX, endY) =>
+        ctx.quadraticCurveTo(x, y, endX, endY),
+      closePath: () => ctx.closePath(),
+      circle: (x, y, radius) => {
+        ctx.moveTo(x + radius, y);
+        ctx.arc(x, y, radius, 0, Math.PI * 2);
+      },
+    },
+    stroke,
+  );
+  if (paint) ctx[paint]();
   ctx.restore();
 }
-export function renderInk(
-  canvas: HTMLCanvasElement,
-  strokes: Stroke[],
-  live?: Stroke,
-) {
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return;
-  ctx.setTransform(canvas.width / PAGE_W, 0, 0, canvas.height / PAGE_H, 0, 0);
-  ctx.clearRect(0, 0, PAGE_W, PAGE_H);
-  for (const s of strokes) drawStroke(ctx, s);
-  if (live) drawStroke(ctx, live);
+
+export function paintSvgStroke(path: SVGPathElement, stroke: Stroke) {
+  const commands: string[] = [];
+  const point = (...values: number[]) =>
+    values.map((n) => Math.round(n * 1000) / 1000).join(" ");
+  const paint = traceStroke(
+    {
+      moveTo: (x, y) => commands.push("M" + point(x, y)),
+      lineTo: (x, y) => commands.push("L" + point(x, y)),
+      quadraticCurveTo: (x, y, endX, endY) =>
+        commands.push("Q" + point(x, y, endX, endY)),
+      closePath: () => commands.push("Z"),
+      circle: (x, y, r) => {
+        const radius = point(r, r);
+        commands.push(
+          "M" + point(x + r, y),
+          "A" + radius + " 0 1 1 " + point(x - r, y),
+          "A" + radius + " 0 1 1 " + point(x + r, y),
+          "Z",
+        );
+      },
+    },
+    stroke,
+  );
+  path.setAttribute("d", commands.join(""));
+  path.setAttribute("fill", paint === "fill" ? stroke.color : "none");
+  path.setAttribute("stroke", paint === "stroke" ? stroke.color : "none");
+  path.setAttribute("stroke-width", String(stroke.width));
+  path.setAttribute(
+    "stroke-linecap",
+    stroke.tool === "marker" ? "butt" : "round",
+  );
+  path.setAttribute("stroke-linejoin", "round");
+  path.setAttribute("opacity", stroke.tool === "marker" ? "0.28" : "1");
 }
+
 function wrappedText(
   ctx: CanvasRenderingContext2D,
   text: string,

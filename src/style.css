@@ -487,7 +487,8 @@ small,
   background: #ababab10;
   pointer-events: none;
 }
-.paper canvas {
+.paper canvas,
+.paper .paper-ink {
   width: 100%;
   height: 100%;
   position: absolute;
@@ -2229,9 +2230,15 @@ input[type="checkbox"] {
   padding-inline: 0.65rem;
 }
 
-/* The current stroke is drawn above the committed page. */
-.paper canvas.committed-ink {
+.paper .paper-ink {
   pointer-events: none;
+}
+.paper-scroll,
+.sample-surface {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
 }
 @media (max-width: 720px), (orientation: portrait) and (max-width: 1180px) {
   .learning-panel {

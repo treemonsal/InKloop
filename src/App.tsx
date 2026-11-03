@@ -954,7 +954,7 @@ export default function App() {
         <main className="library">
           <header className="library-top">
             <div className="library-brand">
-              <Logo /> Inkloop <small className="library-version">V13</small>
+              <Logo /> Inkloop <small className="library-version">V14</small>
             </div>
             <div className="topbar-actions">
               <IconButton label="Deine Handschrift" onClick={startProfile}>
@@ -1302,6 +1302,10 @@ export default function App() {
                           );
                           const target = notebook.pages[index + direction];
                           if (target) navigatePage(target.id);
+                          else
+                            notify(
+                              direction < 0 ? "Erste Seite" : "Letzte Seite",
+                            );
                         }}
                         paper={page.paper}
                         zoom={zoom}
