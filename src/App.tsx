@@ -1,178 +1,87 @@
 import {
-  lazy,
-  Suspense,
   useCallback,
   useEffect,
-  useId,
   useLayoutEffect,
   useRef,
   useState,
-  type ReactNode,
+  type CSSProperties,
 } from "react";
 import {
-  ArrowRight,
   ArrowUpRight,
-  Check,
   CheckCheck,
   ChevronLeft,
-  Copy,
-  Download,
+  CircleAlert,
   Eraser,
-  ExternalLink,
   FileText,
-  Fingerprint,
-  PanelLeft,
-  HelpCircle,
   Highlighter,
-  Link2,
   LoaderCircle,
+  Minus,
   MoreHorizontal,
+  PanelLeft,
   PenLine,
   Plus,
   Redo2,
-  Settings2,
-  ShieldCheck,
   Undo2,
-  Upload,
   X,
-  ZoomIn,
-  ZoomOut,
-  Minus,
-  Trash2,
-  CircleCheck,
 } from "lucide-react";
 import {
-  bridgeStatus,
-  publishWorkspace,
   publishSubmission,
   deleteSharedPage,
-  browserWorkspace,
   hostedWorkspace,
-  useBridgeWorkspace,
-  WorkspaceChanged,
   type BridgeEvent,
 } from "./bridge";
 import { useLiquidChrome } from "./useLiquidChrome";
-import InkCanvas, { WRITING_PAUSE_MS, type Tool } from "./Canvas";
+import InkCanvas, { type Tool } from "./Canvas";
 import {
-  type AppData,
   type Notebook,
   type Page,
   type Stroke,
   type Submission,
-  type Sample,
-  initialData,
   newNotebook,
   newPage,
   uid,
-  chatLink,
   buildPrompt,
   parseBackup,
-  receiveTask,
-  MAX_TEXT_LENGTH,
+  type AppData,
 } from "./model";
-import { loadData, saveData, readStoredData, download } from "./storage";
-import { submissionImage, thumbnail, displayInkColor } from "./ink";
+import { readStoredData, download } from "./storage";
+import { submissionImage, displayInkColor } from "./ink";
+import {
+  IconButton,
+  Logo,
+  Miniature,
+  Toast,
+  dismissModal,
+  type ToastMessage,
+} from "./ui";
+import { usePersistence } from "./usePersistence";
+import { useBridgeSync, workspaceKeyOf } from "./useBridgeSync";
+import {
+  applyBridgeEvents,
+  bridgeNews,
+  mapNotebook,
+  mapPage,
+  mapSubmission,
+} from "./updates";
+import { Library } from "./Library";
+import { LearningPanel, type PanelTab } from "./LearningPanel";
+import {
+  DeleteNotebookSheet,
+  HelpSheet,
+  ImportSheet,
+  INK_PALETTE,
+  NewNotebookSheet,
+  PageMenuSheet,
+  ProfileSheet,
+  SettingsSheet,
+  SubmitSheet,
+  TaskSheet,
+  type Prepared,
+} from "./Sheets";
 
-const MarkdownText = lazy(() => import("./RichText"));
-function IconButton({
-  label,
-  children,
-  onClick,
-  disabled = false,
-  active = false,
-}: {
-  label: string;
-  children: ReactNode;
-  onClick: () => void;
-  disabled?: boolean;
-  active?: boolean;
-}) {
-  return (
-    <button
-      className={`icon-button ${active ? "active" : ""}`}
-      title={label}
-      aria-label={label}
-      aria-pressed={active}
-      disabled={disabled}
-      onClick={onClick}
-    >
-      {children}
-    </button>
-  );
-}
-function Logo() {
-  return <img src="./icon.svg" alt="" width={32} height={32} />;
-}
-function Modal({
-  title,
-  eyebrow,
-  children,
-  onClose,
-  wide = false,
-}: {
-  title: string;
-  eyebrow?: string;
-  children: ReactNode;
-  onClose: () => void;
-  wide?: boolean;
-}) {
-  const ref = useRef<HTMLDialogElement>(null);
-  const titleId = useId();
-  useEffect(() => {
-    ref.current?.showModal();
-    const dialog = ref.current;
-    return () => dialog?.close();
-  }, []);
-  return (
-    <dialog
-      ref={ref}
-      aria-labelledby={titleId}
-      className={`modal ${wide ? "modal-wide" : ""}`}
-      onCancel={onClose}
-      onClick={(e) => {
-        if (e.target === e.currentTarget) {
-          const r = e.currentTarget.getBoundingClientRect();
-          if (
-            e.clientX < r.left ||
-            e.clientX > r.right ||
-            e.clientY < r.top ||
-            e.clientY > r.bottom
-          )
-            onClose();
-        }
-      }}
-    >
-      <div className="modal-heading">
-        <div>
-          {eyebrow && <span className="eyebrow">{eyebrow}</span>}
-          <h2 id={titleId}>{title}</h2>
-        </div>
-        <IconButton label="Schliessen" onClick={onClose}>
-          <X size={20} />
-        </IconButton>
-      </div>
-      {children}
-    </dialog>
-  );
-}
-function Miniature({ strokes, light }: { strokes: Stroke[]; light: boolean }) {
-  const ref = useRef<HTMLCanvasElement>(null);
-  useEffect(() => {
-    if (ref.current) thumbnail(ref.current, strokes, light);
-  }, [strokes, light]);
-  return <canvas ref={ref} aria-hidden="true" />;
-}
-const palette = ["#f4f5f7", "#a9abb2", "#3976e8"];
 const compactLayout =
   "(max-width: 720px), (orientation: portrait) and (max-width: 1180px)";
 const prefersCompactLayout = () => window.matchMedia(compactLayout).matches;
-const sampleLabels = [
-  "a g q y z · b d p · m n u · I l 1",
-  "0 O · 1 7 · 2 Z · 5 S · 8 B · 6 9",
-  "x² + 3x = 12 · ½ · −4,75 · CHF 1’250.00",
-  "Soll / Haben · Aufwand / Ertrag · The quick brown fox.",
-];
 type Sheet =
   | "profile"
   | "settings"
@@ -182,47 +91,60 @@ type Sheet =
   | "help"
   | "pageMenu"
   | "deleteNotebook"
+  | "import"
   | null;
 
+/** True once `active` has stayed true for `ms`, so quick work shows no spinner. */
+function useDelayed(active: boolean, ms: number) {
+  const [shown, setShown] = useState(false);
+  useEffect(() => {
+    if (!active) {
+      setShown(false);
+      return;
+    }
+    const t = setTimeout(() => setShown(true), ms);
+    return () => clearTimeout(t);
+  }, [active, ms]);
+  return shown;
+}
+
 export default function App() {
-  const [data, setData] = useState<AppData | null>(null),
-    [loadError, setLoadError] = useState(""),
-    [accountRequired, setAccountRequired] = useState(false),
-    [accountChanged, setAccountChanged] = useState(false),
-    [saving, setSaving] = useState<"saved" | "saving" | "error">("saved"),
-    [saveError, setSaveError] = useState("");
+  const store = usePersistence();
+  const { data, setData, current, externalEdit, saving } = store;
+  const [accountChanged, setAccountChanged] = useState(false);
   const [sheet, setSheet] = useState<Sheet>(null),
     [inLibrary, setInLibrary] = useState(true),
     [sidebar, setSidebar] = useState(false),
     [compact, setCompact] = useState(prefersCompactLayout),
     [panelOpen, setPanelOpen] = useState(false),
+    [tab, setTab] = useState<PanelTab>("task"),
     [tool, setTool] = useState<Tool>("pen"),
-    [color, setColor] = useState(palette[0]),
+    [color, setColor] = useState(INK_PALETTE[0]),
     [width, setWidth] = useState(2.5),
-    [zoom, setZoom] = useState(1);
-  const [toast, setToast] = useState(""),
-    [draft, setDraft] = useState(""),
+    [zoom, setZoom] = useState(1),
+    [turn, setTurn] = useState<-1 | 0 | 1>(0);
+  const [toast, setToast] = useState<ToastMessage | null>(null),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
     [notebookToDelete, setNotebookToDelete] = useState<string | null>(null),
-    [newName, setNewName] = useState(""),
-    [profileStep, setProfileStep] = useState(0),
-    [sampleInk, setSampleInk] = useState<Stroke[]>([]),
-    [sampleUndo, setSampleUndo] = useState<Stroke[] | null>(null),
-    [profileDraft, setProfileDraft] = useState<Sample[]>([]),
-    [handoffStep, setHandoffStep] = useState<"copy" | "open" | "manual">(
-      "copy",
-    ),
-    [prepared, setPrepared] = useState<{
-      blob: Blob;
-      url: string;
-      prompt: string;
-      submission: Submission;
-      shared: boolean;
-    } | null>(null),
+    [prepared, setPrepared] = useState<Prepared | null>(null),
     [selectedSubmission, setSelectedSubmission] = useState<string | null>(null),
-    [externalEdit, setExternalEdit] = useState(false),
-    [bridgeReady, setBridgeReady] = useState(false);
+    [restoring, setRestoring] = useState(false),
+    [historyVersion, setHistoryVersion] = useState(0);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+      undefined,
+    ),
+    history = useRef(
+      new Map<string, { past: Stroke[][]; future: Stroke[][] }>(),
+    ),
+    importFile = useRef<HTMLInputElement>(null),
+    restoreCandidate = useRef<AppData | null>(null),
+    glassToolbar = useRef<HTMLDivElement>(null),
+    glassActions = useRef<HTMLDivElement>(null),
+    panelToggle = useRef<HTMLButtonElement>(null),
+    learningPanel = useRef<HTMLElement>(null),
+    sheetToken = useRef(0);
+
   const theme = data?.settings.theme ?? "dark";
   const light = theme === "light";
   useLayoutEffect(() => {
@@ -237,31 +159,29 @@ export default function App() {
         .querySelector('meta[name="theme-color"]')
         ?.setAttribute("content", background);
   }, [theme]);
-  const workspace = useRef<string | null>(null);
-  const strokeActive = useRef(false);
-  const lastStrokeEnd = useRef(-Infinity);
-  const current = useRef(data);
-  current.current = data;
-  const lastSaved = useRef<AppData | null>(null),
-    saveQueue = useRef(Promise.resolve()),
-    timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined),
-    toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined),
-    history = useRef(
-      new Map<string, { past: Stroke[][]; future: Stroke[][] }>(),
-    ),
-    [historyVersion, setHistoryVersion] = useState(0),
-    channel = useRef<BroadcastChannel | null>(null);
-  const importFile = useRef<HTMLInputElement>(null);
-  const restoreCandidate = useRef<AppData | null>(null);
-  const glassToolbar = useRef<HTMLDivElement>(null);
-  const glassActions = useRef<HTMLDivElement>(null);
   useLiquidChrome(
     glassToolbar,
     glassActions,
-    Boolean(data) && !inLibrary && !loadError,
+    Boolean(data) && !inLibrary && !store.loadError,
   );
-  const panelToggle = useRef<HTMLButtonElement>(null);
-  const learningPanel = useRef<HTMLElement>(null);
+
+  const notify = useCallback(
+    (
+      message: string,
+      kind: ToastMessage["kind"] = "success",
+      action?: ToastMessage["action"],
+    ) => {
+      setToast({ id: Date.now(), message, kind, action });
+      clearTimeout(toastTimer.current);
+      toastTimer.current = setTimeout(
+        () => setToast(null),
+        action ? 7000 : kind === "error" ? 6000 : 4000,
+      );
+    },
+    [],
+  );
+  useEffect(() => () => clearTimeout(toastTimer.current), []);
+
   const closeLearningPanel = () => {
     setPanelOpen(false);
     panelToggle.current?.focus();
@@ -272,31 +192,6 @@ export default function App() {
         ?.querySelector<HTMLElement>('[aria-selected="true"]')
         ?.focus();
   }, [compact, panelOpen, inLibrary]);
-  const notify = useCallback((message: string) => {
-    setToast(message);
-    clearTimeout(toastTimer.current);
-    toastTimer.current = setTimeout(() => setToast(""), 4500);
-  }, []);
-  const persist = useCallback((d: AppData) => {
-    const scope = workspace.current;
-    if (!scope) return;
-    setSaving("saving");
-    saveQueue.current = saveQueue.current
-      .catch(() => {})
-      .then(() => saveData(d, scope))
-      .then(() => {
-        lastSaved.current = d;
-        if (current.current === d) setSaving("saved");
-        setSaveError("");
-        channel.current?.postMessage("saved");
-      })
-      .catch((e) => {
-        setSaving("error");
-        setSaveError(
-          e instanceof Error ? e.message : "Speichern fehlgeschlagen",
-        );
-      });
-  }, []);
   useEffect(() => {
     const query = window.matchMedia(compactLayout);
     const update = () => {
@@ -307,298 +202,108 @@ export default function App() {
     return () => query.removeEventListener("change", update);
   }, []);
   useEffect(() => {
-    let mounted = true;
-    browserWorkspace(true)
-      .then(async (scope) => {
-        if (!mounted) return;
-        if (!scope) {
-          setAccountRequired(true);
-          return;
-        }
-        workspace.current = scope;
-        useBridgeWorkspace(scope);
-        const d = await loadData(scope);
-        if (!mounted) return;
-        lastSaved.current = d;
-        setData(d || initialData());
-      })
-      .catch((e) => {
-        if (mounted)
-          setLoadError(
-            e instanceof Error ? e.message : "Speicher nicht verfügbar",
-          );
-      });
-    return () => {
-      mounted = false;
-      clearTimeout(toastTimer.current);
-    };
-  }, []);
-  useEffect(() => {
-    if (!data || data === lastSaved.current || externalEdit) return;
-    setSaving("saving");
-    clearTimeout(timer.current);
-    const saveWhenIdle = () => {
-      const remaining =
-        WRITING_PAUSE_MS - (performance.now() - lastStrokeEnd.current);
-      if (strokeActive.current || remaining > 0) {
-        timer.current = setTimeout(saveWhenIdle, Math.max(50, remaining));
-      } else {
-        persist(data);
-      }
-    };
-    timer.current = setTimeout(saveWhenIdle, 350);
-    return () => clearTimeout(timer.current);
-  }, [data, persist, externalEdit]);
-  useEffect(() => {
-    const flush = () => {
-      clearTimeout(timer.current);
-      if (
-        current.current &&
-        current.current !== lastSaved.current &&
-        !externalEdit
-      )
-        persist(current.current);
-    };
-    const visibility = () => {
-      if (document.visibilityState === "hidden") flush();
-    };
-    document.addEventListener("visibilitychange", visibility);
-    window.addEventListener("pagehide", flush);
-    const beforeUnload = (e: BeforeUnloadEvent) => {
-      if (current.current !== lastSaved.current) {
-        e.preventDefault();
-        e.returnValue = "";
-      }
-    };
-    window.addEventListener("beforeunload", beforeUnload);
-    return () => {
-      document.removeEventListener("visibilitychange", visibility);
-      window.removeEventListener("pagehide", flush);
-      window.removeEventListener("beforeunload", beforeUnload);
-    };
-  }, [persist, externalEdit]);
-  useEffect(() => {
-    if (!workspace.current || typeof BroadcastChannel === "undefined") return;
-    const c = new BroadcastChannel("inkloop-changes-" + workspace.current);
-    channel.current = c;
-    c.onmessage = () => setExternalEdit(true);
-    return () => {
-      c.close();
-      channel.current = null;
-    };
-  }, [!!data]);
-  useEffect(() => {
     if (!prepared) return;
     return () => URL.revokeObjectURL(prepared.url);
   }, [prepared]);
-  const applyBridgeEvents = useCallback(
+
+  const onBridgeEvents = useCallback(
     (events: BridgeEvent[], cursor: string) => {
-      if (!events.length) return;
       const known = current.current;
-      if (known && known.bridgeCursor !== cursor) {
-        const responses = events.filter(
-          (e) =>
-            e.type === "response" &&
-            known.notebooks.some((n) =>
-              n.pages.some(
-                (p) =>
-                  p.id === e.pageId &&
-                  p.submissions.some((s) => s.id === e.submissionId),
-              ),
-            ),
-        ).length;
-        const tasks = events.filter(
-          (e) =>
-            e.type === "task" &&
-            e.task &&
-            known.notebooks.some(
-              (n) =>
-                n.id === e.notebookId && !n.pages.some((p) => p.id === e.id),
-            ),
-        ).length;
-        if (responses)
-          notify(
-            responses === 1
-              ? "Neues Feedback aus dem Chat ist da."
-              : `${responses} neue Feedbacks aus dem Chat sind da.`,
-          );
-        else if (tasks)
-          notify(
-            tasks === 1
-              ? "Neue Aufgabe aus dem Chat ist da."
-              : `${tasks} neue Aufgaben aus dem Chat sind da.`,
-          );
+      if (!known || known.bridgeCursor === cursor) return;
+      const { responses, tasks } = bridgeNews(known, events);
+      setData((old) => old && applyBridgeEvents(old, events, cursor));
+      const active = responses.find((e) => e.pageId === known.activePage);
+      const showFeedback = () => {
+        setInLibrary(false);
+        setTab("feedback");
+        setPanelOpen(true);
+      };
+      if (active) {
+        setSelectedSubmission(active.submissionId ?? null);
+        setTab("feedback");
       }
-      setData((old) => {
-        if (!old || old.bridgeCursor === cursor) return old;
-        let next = old;
-        for (const event of events) {
-          if (event.type === "response")
-            next = {
-              ...next,
-              notebooks: next.notebooks.map((n) =>
-                n.id === event.notebookId
-                  ? {
-                      ...n,
-                      pages: n.pages.map((p) =>
-                        p.id === event.pageId
-                          ? {
-                              ...p,
-                              submissions: p.submissions.map((s) =>
-                                s.id === event.submissionId
-                                  ? {
-                                      ...s,
-                                      transcription: event.transcription || "",
-                                      feedback: event.feedback || "",
-                                      nextTask: event.nextTask || "",
-                                    }
-                                  : s,
-                              ),
-                            }
-                          : p,
-                      ),
-                    }
-                  : n,
-              ),
-            };
-          if (event.type === "task" && event.task)
-            next = receiveTask(
-              next,
-              event.notebookId,
-              event.id,
-              event.task,
-              event.language,
-            );
-        }
-        return { ...next, bridgeCursor: cursor };
-      });
+      if (responses.length)
+        notify(
+          responses.length === 1
+            ? "Neues Feedback aus dem Chat ist da."
+            : `${responses.length} neue Feedbacks aus dem Chat sind da.`,
+          "info",
+          active ? { label: "Ansehen", run: showFeedback } : undefined,
+        );
+      else if (tasks.length)
+        notify(
+          tasks.length === 1
+            ? "Neue Aufgabe aus dem Chat ist da."
+            : `${tasks.length} neue Aufgaben aus dem Chat sind da.`,
+          "info",
+        );
     },
-    [notify],
+    [current, setData, notify],
   );
-  useEffect(() => {
-    if (!data || externalEdit || accountChanged) return;
-    let stopped = false,
-      inFlight = false;
-    const poll = async () => {
-      if (inFlight || document.visibilityState === "hidden") return;
-      inFlight = true;
-      try {
-        const result = await bridgeStatus(current.current?.bridgeCursor || "");
-        if (!stopped) {
-          setBridgeReady(result.ok);
-          applyBridgeEvents(result.events, result.cursor);
-        }
-      } catch (error) {
-        if (!stopped) {
-          setBridgeReady(false);
-          if (error instanceof WorkspaceChanged) setAccountChanged(true);
-        }
-      } finally {
-        inFlight = false;
-      }
-    };
-    void poll();
-    const interval = setInterval(poll, 6000);
-    window.addEventListener("focus", poll);
-    document.addEventListener("visibilitychange", poll);
-    return () => {
-      stopped = true;
-      clearInterval(interval);
-      window.removeEventListener("focus", poll);
-      document.removeEventListener("visibilitychange", poll);
-    };
-  }, [!!data, externalEdit, accountChanged, applyBridgeEvents]);
-  const workspaceKey = data
-    ? JSON.stringify({
-        activeNotebook: data.activeNotebook,
-        activePage: data.activePage,
-        notebooks: data.notebooks.map((n) => ({
-          id: n.id,
-          name: n.name,
-          subject: n.subject,
-          language: n.language,
-          pages: n.pages.map((p) => ({ id: p.id, title: p.title })),
-        })),
-      })
-    : "";
-  useEffect(() => {
-    if (!bridgeReady || !current.current || externalEdit || accountChanged)
-      return;
-    const timer = setTimeout(() => {
-      if (current.current) publishWorkspace(current.current).catch(() => {});
-    }, 700);
-    return () => clearTimeout(timer);
-  }, [workspaceKey, bridgeReady, externalEdit, accountChanged]);
+  const bridgeReady = useBridgeSync({
+    current,
+    loaded: !!data,
+    paused: externalEdit || accountChanged,
+    workspaceKey: workspaceKeyOf(data),
+    onEvents: onBridgeEvents,
+    onAccountChanged: () => setAccountChanged(true),
+  });
+  const showSpinner = useDelayed(saving === "saving", 900);
+
   const notebook = data?.notebooks.find((n) => n.id === data.activeNotebook),
     page = notebook?.pages.find((p) => p.id === data?.activePage);
   const submission =
     page?.submissions.find((s) => s.id === selectedSubmission) ||
     page?.submissions.at(-1);
+  const plugin = bridgeReady && data?.settings.provider === "chatgpt";
+
+  const update = (fn: (d: AppData) => AppData) =>
+    setData((d) => (d ? fn(d) : d));
   const patchNotebook = (patch: Partial<Notebook>) =>
-    setData((d) =>
-      d
-        ? {
-            ...d,
-            notebooks: d.notebooks.map((n) =>
-              n.id === d.activeNotebook ? { ...n, ...patch } : n,
-            ),
-          }
-        : d,
+    update((d) =>
+      mapNotebook(d, d.activeNotebook, (n) => ({ ...n, ...patch })),
     );
   const patchPage = (patch: Partial<Page>) =>
-    setData((d) =>
-      d
-        ? {
-            ...d,
-            notebooks: d.notebooks.map((n) =>
-              n.id === d.activeNotebook
-                ? {
-                    ...n,
-                    pages: n.pages.map((p) =>
-                      p.id === d.activePage
-                        ? { ...p, ...patch, updatedAt: Date.now() }
-                        : p,
-                    ),
-                  }
-                : n,
-            ),
-          }
-        : d,
+    update((d) =>
+      mapPage(d, d.activeNotebook, d.activePage, (p) => ({
+        ...p,
+        ...patch,
+        updatedAt: Date.now(),
+      })),
     );
+  const patchSettings = (patch: Partial<AppData["settings"]>) =>
+    update((d) => ({ ...d, settings: { ...d.settings, ...patch } }));
+
   const changeInk = (strokes: Stroke[]) => {
-    if (!page || externalEdit) return;
-    lastStrokeEnd.current = performance.now();
+    if (!page || !notebook || externalEdit) return;
+    store.strokeEnded();
     const h = history.current.get(page.id) || { past: [], future: [] };
     h.past.push(page.strokes);
     if (h.past.length > 60) h.past.shift();
     h.future = [];
     history.current.set(page.id, h);
     setHistoryVersion((v) => v + 1);
-    setData((d) =>
-      d
-        ? {
-            ...d,
-            notebooks: d.notebooks.map((n) => ({
-              ...n,
-              pages: n.pages.map((p) =>
-                p.id === page.id ? { ...p, strokes, updatedAt: Date.now() } : p,
-              ),
-            })),
-          }
-        : d,
+    update((d) =>
+      mapPage(d, notebook.id, page.id, (p) => ({
+        ...p,
+        strokes,
+        updatedAt: Date.now(),
+      })),
     );
   };
   const undo = (redo = false) => {
-    if (!page) return;
-    const h = history.current.get(page.id);
-    if (!h) return;
-    const stack = redo ? h.future : h.past;
-    const strokes = stack.pop();
-    if (strokes) {
-      (redo ? h.past : h.future).push(page.strokes);
-      patchPage({ strokes });
-      setHistoryVersion((v) => v + 1);
-    }
+    // Read the live page so delayed callers (a toast action) stay correct.
+    const d = current.current;
+    const live = d?.notebooks
+      .find((n) => n.id === d.activeNotebook)
+      ?.pages.find((p) => p.id === d.activePage);
+    if (!live) return;
+    const h = history.current.get(live.id);
+    const strokes = (redo ? h?.future : h?.past)?.pop();
+    if (!h || !strokes) return;
+    (redo ? h.past : h.future).push(live.strokes);
+    patchPage({ strokes });
+    setHistoryVersion((v) => v + 1);
   };
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -621,21 +326,39 @@ export default function App() {
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   });
-  const open = (s: Sheet, value = "") => {
+
+  const open = (s: Sheet) => {
+    sheetToken.current++;
     setError("");
-    setDraft(value);
     setSheet(s);
   };
+  /** Closes `which` (default: the open sheet) unless another one replaced it. */
+  const closeSheet = (which: Sheet = sheet) => {
+    const token = sheetToken.current;
+    dismissModal(() =>
+      setSheet((s) => {
+        if (s !== which || sheetToken.current !== token) return s;
+        if (which === "submit") setPrepared(null);
+        if (which === "settings") {
+          restoreCandidate.current = null;
+          setRestoring(false);
+        }
+        setError("");
+        return null;
+      }),
+    );
+  };
   const close = () => {
-    if (busy) return;
-    setSheet(null);
-    restoreCandidate.current = null;
-    setError("");
-    if (sheet === "submit") setPrepared(null);
+    if (!busy) closeSheet();
+  };
+  const resetPageView = () => {
+    setSelectedSubmission(null);
+    setTab("task");
+    setZoom(1);
   };
   const openNotebook = (n: Notebook) => {
-    setData((d) => {
-      if (!d || d.activeNotebook === n.id) return d;
+    update((d) => {
+      if (d.activeNotebook === n.id) return d;
       const last = n.pages.find((p) => p.id === n.lastPageId);
       return {
         ...d,
@@ -643,28 +366,44 @@ export default function App() {
         activePage: last?.id ?? n.pages[0].id,
       };
     });
-    setSelectedSubmission(null);
-    setZoom(1);
+    if (data?.activeNotebook !== n.id) resetPageView();
+    setTurn(0);
     setSidebar(false);
     setPanelOpen(false);
     setInLibrary(false);
   };
-  const openLibrary = () => {
+  const navigatePage = (id: string, direction: -1 | 0 | 1 = 0) => {
+    setTurn(direction);
+    update((d) => ({
+      ...mapNotebook(d, d.activeNotebook, (n) => ({ ...n, lastPageId: id })),
+      activePage: id,
+    }));
+    resetPageView();
+  };
+  const addPage = (task = "") => {
+    if (!notebook) return;
+    const p = { ...newPage(`Seite ${notebook.pages.length + 1}`), task };
+    update((d) => ({
+      ...mapNotebook(d, d.activeNotebook, (n) => ({
+        ...n,
+        pages: [...n.pages, p],
+        lastPageId: p.id,
+      })),
+      activePage: p.id,
+    }));
+    resetPageView();
+    setTurn(1);
     setSidebar(false);
-    setInLibrary(true);
   };
   const notebookForDeletion = data?.notebooks.find(
     (n) => n.id === notebookToDelete,
   );
   const deleteNotebook = () => {
     if (!notebookForDeletion || externalEdit) return;
-    setData((d) => {
-      if (!d) return d;
-      const notebooks = d.notebooks.filter(
-        (n) => n.id !== notebookForDeletion.id,
-      );
-      if (d.activeNotebook !== notebookForDeletion.id)
-        return { ...d, notebooks };
+    const doomed = notebookForDeletion;
+    update((d) => {
+      const notebooks = d.notebooks.filter((n) => n.id !== doomed.id);
+      if (d.activeNotebook !== doomed.id) return { ...d, notebooks };
       const next = notebooks[0];
       return {
         ...d,
@@ -676,51 +415,10 @@ export default function App() {
           "",
       };
     });
-    for (const p of notebookForDeletion.pages) history.current.delete(p.id);
+    for (const p of doomed.pages) history.current.delete(p.id);
     setNotebookToDelete(null);
     close();
     notify("Lernheft auf diesem Gerät gelöscht.");
-  };
-  const startProfile = () => {
-    setProfileStep(0);
-    setSampleInk([]);
-    setSampleUndo(null);
-    setProfileDraft([]);
-    open("profile");
-  };
-  const navigatePage = (id: string) => {
-    setData(
-      (d) =>
-        d && {
-          ...d,
-          activePage: id,
-          notebooks: d.notebooks.map((n) =>
-            n.id === d.activeNotebook ? { ...n, lastPageId: id } : n,
-          ),
-        },
-    );
-    setSelectedSubmission(null);
-    setZoom(1);
-  };
-  const addPage = (task = "") => {
-    if (!notebook) return;
-    const p = { ...newPage(`Seite ${notebook.pages.length + 1}`), task };
-    setData((d) =>
-      d
-        ? {
-            ...d,
-            activePage: p.id,
-            notebooks: d.notebooks.map((n) =>
-              n.id === d.activeNotebook
-                ? { ...n, pages: [...n.pages, p], lastPageId: p.id }
-                : n,
-            ),
-          }
-        : d,
-    );
-    setSelectedSubmission(null);
-    setZoom(1);
-    setSidebar(false);
   };
   const copyText = async (text: string) => {
     try {
@@ -728,16 +426,25 @@ export default function App() {
       notify("In die Zwischenablage kopiert.");
       return true;
     } catch {
-      setError(
-        "Kopieren nicht verfügbar. Markiere den Text und kopiere ihn manuell.",
-      );
+      notify("Kopieren nicht verfügbar.", "error");
       return false;
     }
   };
+  const markSent = (n: Notebook, pageId: string, s: Submission) =>
+    update((d) =>
+      mapPage(d, n.id, pageId, (p) => ({
+        ...p,
+        submissions: p.submissions.map((x) =>
+          x.id === s.id && x.handoff
+            ? { ...x, handoff: { ...x.handoff, sent: true } }
+            : x,
+        ),
+      })),
+    );
   const showHandoff = async (
     n: Notebook,
     pageId: string,
-    submission: Submission,
+    s: Submission,
     handoff: NonNullable<Submission["handoff"]>,
     send: boolean,
   ) => {
@@ -750,44 +457,18 @@ export default function App() {
         subject: handoff.subject,
         language: handoff.language,
       };
-      const blob = await submissionImage(source, submission, handoff.samples);
-      const prompt = buildPrompt(source, submission, handoff.samples.length);
+      const blob = await submissionImage(source, s, handoff.samples);
+      const prompt = buildPrompt(source, s, handoff.samples.length);
       let shared = handoff.sent;
       if (send) {
         try {
-          await publishSubmission(source, pageId, submission, blob, prompt);
+          await publishSubmission(source, pageId, s, blob, prompt);
           shared = true;
-          setData(
-            (d) =>
-              d && {
-                ...d,
-                notebooks: d.notebooks.map((book) =>
-                  book.id === n.id
-                    ? {
-                        ...book,
-                        pages: book.pages.map((p) =>
-                          p.id === pageId
-                            ? {
-                                ...p,
-                                submissions: p.submissions.map((s) =>
-                                  s.id === submission.id
-                                    ? {
-                                        ...s,
-                                        handoff: { ...handoff, sent: true },
-                                      }
-                                    : s,
-                                ),
-                              }
-                            : p,
-                        ),
-                      }
-                    : book,
-                ),
-              },
-          );
+          markSent(n, pageId, s);
         } catch {
           notify(
             "Senden fehlgeschlagen. Du kannst es bei dieser Abgabe erneut versuchen.",
+            "error",
           );
         }
       }
@@ -796,15 +477,15 @@ export default function App() {
         return;
       }
       if (current.current?.activePage === pageId) {
-        setHandoffStep("copy");
         setPrepared({
           blob,
           url: URL.createObjectURL(blob),
           prompt,
-          submission,
+          submission: s,
           shared,
         });
-        setSelectedSubmission(submission.id);
+        setSelectedSubmission(s.id);
+        sheetToken.current++;
         setSheet("submit");
       }
     } catch (e) {
@@ -812,21 +493,15 @@ export default function App() {
         e instanceof Error
           ? e.message
           : "Das Abgabebild konnte nicht erstellt werden.",
+        "error",
       );
     } finally {
       setBusy(false);
     }
   };
   const prepareSubmission = () => {
-    if (
-      !data ||
-      !notebook ||
-      !page ||
-      !page.strokes.length ||
-      busy ||
-      externalEdit
-    )
-      return;
+    if (!data || !notebook || !page || !page.strokes.length || busy) return;
+    if (externalEdit) return;
     const handoff = {
       subject: notebook.subject,
       language: page.language ?? notebook.language,
@@ -844,53 +519,64 @@ export default function App() {
       handoff,
     };
     patchPage({ submissions: [...page.submissions, s] });
-    void showHandoff(
-      notebook,
-      page.id,
-      s,
-      handoff,
-      bridgeReady && data.settings.provider === "chatgpt",
-    );
+    void showHandoff(notebook, page.id, s, handoff, !!plugin);
+  };
+  const applyResponse = (result: {
+    transcription: string;
+    feedback: string;
+    nextTask: string;
+  }) => {
+    if (!page || !notebook) return;
+    if (submission) {
+      update((d) =>
+        mapSubmission(d, page.id, submission.id, (s) => ({ ...s, ...result })),
+      );
+    } else {
+      const s: Submission = {
+        id: uid(),
+        createdAt: Date.now(),
+        strokes: structuredClone(page.strokes),
+        task: page.task,
+        ...result,
+      };
+      patchPage({ submissions: [...page.submissions, s] });
+      setSelectedSubmission(s.id);
+    }
+    setTab(result.feedback ? "feedback" : "text");
+    setPanelOpen(true);
+    close();
+    notify("Antwort im Lernheft gespeichert.");
   };
   const deletePage = async (includeServer: boolean) => {
     if (!notebook || !page || busy || externalEdit) return;
     setBusy(true);
     setError("");
     try {
-      if (includeServer) {
+      if (includeServer)
         await deleteSharedPage(
           page.id,
           page.submissions.map((s) => s.id),
         );
-      }
-      setData((d) => {
-        if (!d) return d;
+      update((d) => {
         const target = d.notebooks.find((n) => n.id === notebook.id);
-        if (!target) return d;
-        const index = target.pages.findIndex((p) => p.id === page.id);
-        if (index < 0) return d;
+        const index = target?.pages.findIndex((p) => p.id === page.id) ?? -1;
+        if (!target || index < 0) return d;
         const pages = target.pages.filter((p) => p.id !== page.id);
         if (!pages.length) pages.push(newPage("Seite 1"));
         const replacement = pages[Math.max(0, index - 1)].id;
         return {
-          ...d,
+          ...mapNotebook(d, target.id, (n) => ({
+            ...n,
+            pages,
+            lastPageId: n.lastPageId === page.id ? replacement : n.lastPageId,
+          })),
           activePage: d.activePage === page.id ? replacement : d.activePage,
-          notebooks: d.notebooks.map((n) =>
-            n === target
-              ? {
-                  ...n,
-                  pages,
-                  lastPageId:
-                    n.lastPageId === page.id ? replacement : n.lastPageId,
-                }
-              : n,
-          ),
         };
       });
       history.current.delete(page.id);
-      setSelectedSubmission(null);
-      setZoom(1);
-      close();
+      resetPageView();
+      setBusy(false);
+      closeSheet("pageMenu");
       notify(
         includeServer
           ? "Seite und Serverkopien gelöscht."
@@ -914,25 +600,26 @@ export default function App() {
   };
   const restore = async (file?: File) => {
     if (!file) return;
-    setError("");
     try {
       restoreCandidate.current = parseBackup(await file.text());
+      setRestoring(true);
       open("settings");
-      setError("restore-confirm");
     } catch (e) {
-      notify((e as Error).message);
+      notify((e as Error).message, "error");
     }
     if (importFile.current) importFile.current.value = "";
   };
   const fileName = `inkloop-${notebook?.subject.toLowerCase().replace(/[^a-z0-9]+/g, "-") || "antwort"}.png`;
-  if (accountRequired || accountChanged) {
+
+  if (store.accountRequired || accountChanged) {
     return (
       <main className="load-error">
+        <Logo />
         <h1>Inkloop</h1>
         <p>
           {accountChanged
-            ? "Das ChatGPT Konto wurde gewechselt."
-            : "Melde dich mit deinem ChatGPT Konto an."}
+            ? "Das ChatGPT-Konto wurde gewechselt."
+            : "Melde dich mit deinem ChatGPT-Konto an."}
         </p>
         <a
           className="primary"
@@ -944,7 +631,7 @@ export default function App() {
       </main>
     );
   }
-  if (loadError)
+  if (store.loadError)
     return (
       <div className="load-error">
         <Logo />
@@ -953,20 +640,20 @@ export default function App() {
           Inkloop konnte den lokalen Speicher nicht öffnen. Bestehende Daten
           wurden nicht überschrieben.
         </p>
-        <p className="muted">{loadError}</p>
+        <p className="muted">{store.loadError}</p>
         <button
           className="secondary"
           onClick={async () => {
             try {
-              if (!workspace.current) return;
-              const raw = await readStoredData(workspace.current);
+              if (!store.workspace.current) return;
+              const raw = await readStoredData(store.workspace.current);
               if (!raw) throw new Error();
               download(
                 new Blob([JSON.stringify(raw)], { type: "application/json" }),
                 "inkloop-notfallsicherung.json",
               );
             } catch {
-              setLoadError(
+              store.setLoadError(
                 "Auch die Notfallsicherung konnte nicht gelesen werden. Bitte Website-Daten nicht löschen.",
               );
             }
@@ -990,15 +677,34 @@ export default function App() {
         <span>Lernhefte werden geladen</span>
       </div>
     );
-  const currentChatUrl =
+
+  const chatUrl =
     data.settings.provider === "chatgpt"
       ? (notebook?.chatUrl ?? "")
       : (notebook?.claudeUrl ?? "");
   const h = page ? history.current.get(page.id) : undefined;
-  const pluginPrompt = prepared
-    ? `Lies meine Inkloop-Abgabe ${prepared.submission.id} mit dem Inkloop-Plugin. Transkribiere die Handschrift originalgetreu, gib anschliessend Lernfeedback und speichere beides mit inkloop_write_response zurück. Nutze den Kontext unseres Chats.`
-    : "";
   void historyVersion;
+  const banner = (saving === "error" || externalEdit) && (
+    <div className="error-banner" role="alert">
+      <CircleAlert size={17} aria-hidden="true" />
+      <span>
+        {externalEdit
+          ? "Inkloop wurde in einem anderen Fenster geändert. Lade neu, bevor du weiterschreibst."
+          : `Speichern fehlgeschlagen. ${store.saveError} Bitte eine Sicherung herunterladen.`}
+      </span>
+      <button onClick={externalEdit ? () => location.reload() : backup}>
+        {externalEdit ? "Neu laden" : "Sicherung herunterladen"}
+      </button>
+    </div>
+  );
+  const turnPage = (direction: -1 | 1) => {
+    if (!notebook || !page) return;
+    const index = notebook.pages.findIndex((p) => p.id === page.id);
+    const target = notebook.pages[index + direction];
+    if (target) navigatePage(target.id, direction);
+    else notify(direction < 0 ? "Erste Seite" : "Letzte Seite", "info");
+  };
+
   return (
     <>
       <input
@@ -1009,167 +715,91 @@ export default function App() {
         onChange={(e) => restore(e.target.files?.[0])}
       />
       {inLibrary || !notebook || !page ? (
-        <main className="library">
-          <header className="library-top">
-            <div className="library-brand">
-              <Logo /> Inkloop <small className="library-version">V24</small>
-            </div>
-            <div className="topbar-actions">
-              <IconButton label="Deine Handschrift" onClick={startProfile}>
-                <Fingerprint size={20} />
-              </IconButton>
-              <IconButton
-                label="Einstellungen"
-                onClick={() => open("settings")}
-              >
-                <Settings2 size={20} />
-              </IconButton>
-            </div>
-          </header>
-          {(saving === "error" || externalEdit) && (
-            <div className="error-banner" role="alert">
-              {externalEdit
-                ? "Änderungen in einem anderen Fenster."
-                : "Speichern fehlgeschlagen."}
-              <button onClick={externalEdit ? () => location.reload() : backup}>
-                {externalEdit ? "Neu laden" : "Sicherung herunterladen"}
-              </button>
-            </div>
-          )}
-          <div className="library-content">
-            <div className="library-heading">
-              <h1>Lernhefte</h1>
-              <button
-                className="primary"
-                onClick={() => {
-                  setNewName("");
-                  open("newNotebook");
-                }}
-              >
-                <Plus size={17} /> Neues Lernheft
-              </button>
-            </div>
-            {notebook &&
-              page &&
-              (notebook.lastPageId || page.task || page.strokes.length > 0) && (
-                <button
-                  className="resume-notebook"
-                  onClick={() => openNotebook(notebook)}
-                >
-                  <PenLine size={20} />
-                  <span>
-                    <strong>Weiterschreiben</strong>
-                    <small>
-                      {notebook.name} / {page.title}
-                    </small>
-                  </span>
-                  <ArrowRight size={18} />
-                </button>
-              )}
-            {!data.notebooks.length && <p className="muted">Keine Lernhefte</p>}
-            <ul className="library-list" aria-label="Lernhefte">
-              {data.notebooks.map((n) => {
-                const previewPage =
-                  n.id === notebook?.id && page
-                    ? page
-                    : (n.pages.find((p) => p.id === n.lastPageId) ??
-                      n.pages[0]);
-                return (
-                  <li key={n.id}>
-                    <button
-                      className="library-notebook"
-                      aria-label={n.name}
-                      onClick={() => openNotebook(n)}
-                    >
-                      <span className="notebook-cover" aria-hidden="true">
-                        <span
-                          className={`cover-paper paper-${previewPage.paper}`}
-                        >
-                          <Miniature
-                            strokes={previewPage.strokes}
-                            light={light}
-                          />
-                        </span>
-                      </span>
-                      <span className="library-name">
-                        <span>{n.name}</span>
-                        <small>
-                          {n.pages.length}{" "}
-                          {n.pages.length === 1 ? "Seite" : "Seiten"}
-                        </small>
-                      </span>
-                    </button>
-                    <button
-                      className="icon-button notebook-options"
-                      aria-label={`Optionen für ${n.name}`}
-                      title="Lernheft löschen"
-                      disabled={externalEdit}
-                      onClick={() => {
-                        setNotebookToDelete(n.id);
-                        open("deleteNotebook");
-                      }}
-                    >
-                      <MoreHorizontal size={21} />
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
-        </main>
+        <Library
+          data={data}
+          notebook={notebook}
+          page={page}
+          light={light}
+          banner={banner}
+          locked={externalEdit}
+          onOpen={openNotebook}
+          onCreate={() => open("newNotebook")}
+          onOptions={(n) => {
+            setNotebookToDelete(n.id);
+            open("deleteNotebook");
+          }}
+          onProfile={() => open("profile")}
+          onSettings={() => open("settings")}
+        />
       ) : (
         <>
-          {sidebar && (
-            <>
-              <button
-                className="sidebar-scrim"
-                aria-label="Seiten schliessen"
+          <button
+            className={`sidebar-scrim ${sidebar ? "visible" : ""}`}
+            aria-label="Seiten schliessen"
+            tabIndex={-1}
+            aria-hidden={!sidebar}
+            onClick={() => setSidebar(false)}
+          />
+          <aside
+            className={`sidebar ${sidebar ? "visible" : ""}`}
+            aria-label="Seiten"
+            aria-hidden={!sidebar}
+            inert={!sidebar}
+          >
+            <div className="drawer-heading">
+              <h2>Seiten</h2>
+              <IconButton
+                label="Seitenleiste schliessen"
                 onClick={() => setSidebar(false)}
-              />
-              <aside className="sidebar visible" aria-label="Seiten">
-                <div className="drawer-heading">
-                  <h2>Seiten</h2>
-                  <IconButton
-                    label="Schliessen"
-                    onClick={() => setSidebar(false)}
-                  >
-                    <X size={20} />
-                  </IconButton>
-                </div>
-                <div className="pages-list">
-                  {notebook.pages.map((p, i) => (
-                    <button
-                      className={`page-link ${p.id === page.id ? "selected" : ""}`}
-                      key={p.id}
-                      onClick={() => {
-                        navigatePage(p.id);
-                        setSidebar(false);
-                      }}
-                    >
-                      <span className="page-thumb">
-                        <Miniature strokes={p.strokes} light={light} />
-                        <span>{String(i + 1).padStart(2, "0")}</span>
-                      </span>
-                      <span className="page-link-label">{p.title}</span>
-                    </button>
-                  ))}
-                </div>
+              >
+                <X size={20} />
+              </IconButton>
+            </div>
+            <div className="pages-list">
+              {notebook.pages.map((p, i) => (
                 <button
-                  className="text-button new-page"
-                  onClick={() => addPage()}
+                  className={`page-link ${p.id === page.id ? "selected" : ""}`}
+                  key={p.id}
+                  aria-current={p.id === page.id ? "page" : undefined}
+                  onClick={() => {
+                    const from = notebook.pages.findIndex(
+                      (x) => x.id === page.id,
+                    );
+                    if (p.id !== page.id) navigatePage(p.id, i > from ? 1 : -1);
+                    setSidebar(false);
+                  }}
                 >
-                  <Plus size={16} /> Neue Seite
+                  <span className="page-thumb">
+                    <Miniature
+                      strokes={p.strokes}
+                      light={light}
+                      live={sidebar}
+                    />
+                    <span>{String(i + 1).padStart(2, "0")}</span>
+                  </span>
+                  <span className="page-link-label">
+                    {p.title}
+                    {p.submissions.some((s) => s.feedback) && (
+                      <small>Mit Feedback</small>
+                    )}
+                  </span>
                 </button>
-              </aside>
-            </>
-          )}
+              ))}
+            </div>
+            <button className="text-button new-page" onClick={() => addPage()}>
+              <Plus size={16} /> Neue Seite
+            </button>
+          </aside>
           <main className="app-main">
             <header className="topbar">
               <div className="editor-navigation">
                 <button
                   className="icon-button library-back"
                   aria-label="Alle Lernhefte"
-                  onClick={openLibrary}
+                  onClick={() => {
+                    setSidebar(false);
+                    setInLibrary(true);
+                  }}
                 >
                   <ChevronLeft size={20} />
                   <span>Lernhefte</span>
@@ -1184,6 +814,11 @@ export default function App() {
                 </button>
                 <span className="editor-notebook" title={notebook.name}>
                   {notebook.name}
+                  <small>
+                    {page.title} ·{" "}
+                    {notebook.pages.findIndex((p) => p.id === page.id) + 1}/
+                    {notebook.pages.length}
+                  </small>
                 </span>
               </div>
               <div className="editor-tools">
@@ -1195,47 +830,36 @@ export default function App() {
                   inert={sidebar || externalEdit || (compact && panelOpen)}
                 >
                   <div className="toolbar-group">
-                    <IconButton
-                      label="Stift"
-                      active={tool === "pen"}
-                      onClick={() => setTool("pen")}
-                    >
-                      <PenLine size={20} />
-                    </IconButton>
-                    <IconButton
-                      label="Textmarker"
-                      active={tool === "marker"}
-                      onClick={() => setTool("marker")}
-                    >
-                      <Highlighter size={20} />
-                    </IconButton>
-                    <IconButton
-                      label="Radierer"
-                      active={tool === "eraser"}
-                      onClick={() => setTool("eraser")}
-                    >
-                      <Eraser size={20} />
-                    </IconButton>
-                    <IconButton
-                      label="Gerade Linie"
-                      active={tool === "line"}
-                      onClick={() => setTool("line")}
-                    >
-                      <Minus size={20} />
-                    </IconButton>
+                    {(
+                      [
+                        ["pen", "Stift", PenLine],
+                        ["marker", "Textmarker", Highlighter],
+                        ["eraser", "Radierer", Eraser],
+                        ["line", "Gerade Linie", Minus],
+                      ] as const
+                    ).map(([t, label, Icon]) => (
+                      <IconButton
+                        key={t}
+                        label={label}
+                        active={tool === t}
+                        onClick={() => setTool(t)}
+                      >
+                        <Icon size={20} />
+                      </IconButton>
+                    ))}
                   </div>
                   <span className="toolbar-divider" />
                   <div className="ink-colors" aria-label="Stiftfarbe">
-                    {palette.map((c) => (
+                    {INK_PALETTE.map((c, i) => (
                       <button
                         key={c}
                         className={`color-button ${c === color ? "selected" : ""}`}
                         style={
                           {
                             "--ink": displayInkColor(c, light),
-                          } as React.CSSProperties
+                          } as CSSProperties
                         }
-                        aria-label={`Farbe ${c}`}
+                        aria-label={`Farbe ${["Hell", "Grau", "Blau"][i]}`}
                         aria-pressed={c === color}
                         onClick={() => {
                           setColor(c);
@@ -1284,10 +908,10 @@ export default function App() {
                   className={`save-state ${saving === "error" ? "error" : ""}`}
                   title={saving === "saved" ? "Gespeichert" : "Speicherstatus"}
                 >
-                  {saving === "saving" ? (
+                  {saving === "error" ? (
+                    <CircleAlert size={16} />
+                  ) : showSpinner ? (
                     <LoaderCircle size={16} className="spin" />
-                  ) : saving === "error" ? (
-                    <HelpCircle size={16} />
                   ) : (
                     <CheckCheck size={17} />
                   )}
@@ -1300,7 +924,7 @@ export default function App() {
                   </span>
                 </span>
                 <button
-                  className="panel-toggle secondary"
+                  className={`panel-toggle secondary ${submission?.feedback ? "has-feedback" : ""}`}
                   aria-label="Lernbereich"
                   aria-expanded={panelOpen}
                   aria-controls="learning-panel"
@@ -1323,24 +947,11 @@ export default function App() {
                   ) : (
                     <ArrowUpRight size={17} />
                   )}
-                  {bridgeReady && data.settings.provider === "chatgpt"
-                    ? "An ChatGPT"
-                    : "Abgeben"}
+                  {plugin ? "An ChatGPT" : "Abgeben"}
                 </button>
               </div>
             </header>
-            {(saving === "error" || externalEdit) && (
-              <div className="error-banner">
-                {externalEdit
-                  ? "Inkloop wurde in einem anderen Fenster geändert. Lade diese Seite neu, bevor du weiterschreibst."
-                  : `Speichern fehlgeschlagen. ${saveError} Bitte eine Sicherung herunterladen.`}
-                <button
-                  onClick={externalEdit ? () => location.reload() : backup}
-                >
-                  {externalEdit ? "Neu laden" : "Sicherung herunterladen"}
-                </button>
-              </div>
-            )}
+            {banner}
             <div
               className={`workspace ${panelOpen ? "" : "panel-hidden"}`}
               inert={externalEdit}
@@ -1351,30 +962,21 @@ export default function App() {
                 inert={sidebar || (compact && panelOpen)}
               >
                 <div className="canvas-shell">
-                  <div className="paper-scroll" key={page.id}>
+                  <div
+                    className={`paper-scroll ${turn ? `turn-${turn > 0 ? "next" : "previous"}` : ""}`}
+                    key={page.id}
+                  >
                     <div className="paper-holder">
                       <InkCanvas
                         key={page.id}
                         strokes={page.strokes}
                         onChange={changeInk}
-                        onStrokeActive={(active) => {
-                          strokeActive.current = active;
-                        }}
+                        onStrokeActive={store.strokeActivity}
                         tool={tool}
                         color={color}
                         light={light}
                         width={width}
-                        onPageSwipe={(direction) => {
-                          const index = notebook.pages.findIndex(
-                            (p) => p.id === page.id,
-                          );
-                          const target = notebook.pages[index + direction];
-                          if (target) navigatePage(target.id);
-                          else
-                            notify(
-                              direction < 0 ? "Erste Seite" : "Letzte Seite",
-                            );
-                        }}
+                        onPageSwipe={turnPage}
                         paper={page.paper}
                         zoom={zoom}
                       />
@@ -1394,129 +996,49 @@ export default function App() {
                       onClick={closeLearningPanel}
                     />
                   )}
-                  <aside
-                    id="learning-panel"
-                    ref={learningPanel}
-                    className="learning-panel"
-                    aria-label="Lernbereich"
-                    aria-hidden={!panelOpen}
+                  <LearningPanel
+                    panelRef={learningPanel}
+                    data={data}
+                    page={page}
+                    submission={submission}
+                    tab={tab}
+                    open={panelOpen}
                     inert={sidebar || !panelOpen}
-                  >
-                    <div className="panel-content" id="learning-content">
-                      {page.task ? (
-                        <div className="task-content">
-                          <RichText text={page.task} />
-                          <button
-                            className="text-button small"
-                            onClick={() => open("task", page.task)}
-                          >
-                            <PenLine size={14} /> Bearbeiten
-                          </button>
-                        </div>
-                      ) : (
-                        <div className="panel-empty">
-                          <p>Keine Aufgabe</p>
-                          <button
-                            className="secondary"
-                            onClick={() => open("task")}
-                          >
-                            <Plus size={16} /> Aufgabe einfügen
-                          </button>
-                        </div>
-                      )}
-                      {page.submissions.length > 0 && (
-                        <div className="submission-history">
-                          <label htmlFor="submission-select">
-                            Abgaben auf dieser Seite
-                          </label>
-                          <select
-                            id="submission-select"
-                            value={submission?.id || ""}
-                            onChange={(e) =>
-                              setSelectedSubmission(e.target.value)
-                            }
-                          >
-                            {[...page.submissions].reverse().map((s, i) => (
-                              <option value={s.id} key={s.id}>
-                                Abgabe {page.submissions.length - i} ·{" "}
-                                {new Date(s.createdAt).toLocaleTimeString(
-                                  "de-CH",
-                                  {
-                                    hour: "2-digit",
-                                    minute: "2-digit",
-                                  },
-                                )}
-                              </option>
-                            ))}
-                          </select>
-                          {submission &&
-                            data.settings.provider === "chatgpt" && (
-                              <>
-                                <small>
-                                  {submission.handoff?.sent
-                                    ? "Für ChatGPT bereitgestellt"
-                                    : submission.handoff
-                                      ? "Lokal gespeichert"
-                                      : "Sendestatus unbekannt"}
-                                </small>
-                                <button
-                                  className="text-button small"
-                                  disabled={busy}
-                                  onClick={() =>
-                                    void showHandoff(
-                                      notebook,
-                                      page.id,
-                                      submission,
-                                      submission.handoff ?? {
-                                        subject: notebook.subject,
-                                        language:
-                                          page.language ?? notebook.language,
-                                        samples: [],
-                                        sent: false,
-                                      },
-                                      !submission.handoff?.sent,
-                                    )
-                                  }
-                                >
-                                  {submission.handoff?.sent
-                                    ? "Übergabe öffnen"
-                                    : "Erneut an ChatGPT senden"}
-                                </button>
-                              </>
-                            )}
-                        </div>
-                      )}
-                    </div>
-                    <div className="panel-bottom">
-                      <div className="chat-choice">
-                        <span className="section-label">Chat</span>
-                        <select
-                          aria-label="KI-Anbieter"
-                          value={data.settings.provider}
-                          onChange={(e) =>
-                            setData({
-                              ...data,
-                              settings: {
-                                ...data.settings,
-                                provider: e.target.value as
-                                  "chatgpt" | "claude",
-                              },
-                            })
-                          }
-                        >
-                          <option value="chatgpt">ChatGPT</option>
-                          <option value="claude">Claude (manuell)</option>
-                        </select>
-                      </div>
-                      <button
-                        className="chat-link text-button small"
-                        onClick={() => open("settings")}
-                      >
-                        <Link2 size={13} />
-                        {currentChatUrl ? "Chat ändern" : "Chat verknüpfen"}
-                      </button>
-                    </div>
-                  </aside>
+                    busy={busy}
+                    chatLinked={!!chatUrl}
+                    connected={!!plugin}
+                    onTab={setTab}
+                    onEditTask={() => open("task")}
+                    onImport={() => open("import")}
+                    onCopy={(text) => void copyText(text)}
+                    onEditSubmission={(patch) =>
+                      submission &&
+                      update((d) =>
+                        mapSubmission(d, page.id, submission.id, (s) => ({
+                          ...s,
+                          ...patch,
+                        })),
+                      )
+                    }
+                    onSolveNext={(task) => addPage(task)}
+                    onSelectSubmission={setSelectedSubmission}
+                    onHandoff={(s) =>
+                      void showHandoff(
+                        notebook,
+                        page.id,
+                        s,
+                        s.handoff ?? {
+                          subject: notebook.subject,
+                          language: page.language ?? notebook.language,
+                          samples: [],
+                          sent: false,
+                        },
+                        !s.handoff?.sent,
+                      )
+                    }
+                    onProvider={(provider) => patchSettings({ provider })}
+                    onLinkChat={() => open("settings")}
+                  />
                 </>
               )}
             </div>
@@ -1524,802 +1046,161 @@ export default function App() {
         </>
       )}
       {sheet === "profile" && (
-        <Modal
-          title={`Handschriftprobe ${profileStep + 1} von ${sampleLabels.length}`}
+        <ProfileSheet
+          light={light}
           onClose={close}
-          wide
-        >
-          <p className="muted">
-            Schreibe die Vorgabe ab. Beim Abgeben kannst du die Proben als
-            Lesehilfe mitsenden.
-          </p>
-          <div className="profile-progress">
-            {sampleLabels.map((_, i) => (
-              <span key={i} className={i <= profileStep ? "done" : ""} />
-            ))}
-          </div>
-          <div className="sample-target">{sampleLabels[profileStep]}</div>
-          <div className="sample-surface">
-            <InkCanvas
-              key={profileStep}
-              strokes={sampleInk}
-              onChange={(ink) => {
-                setSampleUndo(sampleInk);
-                setSampleInk(ink);
-              }}
-              tool="pen"
-              color={palette[0]}
-              light={light}
-              width={2.5}
-              paper="ruled"
-              label="Handschriftprobe"
-            />
-          </div>
-          <div className="sample-actions">
-            <IconButton
-              label="Probe rückgängig"
-              disabled={!sampleUndo}
-              onClick={() => {
-                if (sampleUndo) setSampleInk(sampleUndo);
-                setSampleUndo(null);
-              }}
-            >
-              <Undo2 size={16} />
-            </IconButton>
-            <button
-              className="text-button small"
-              onClick={() => {
-                setSampleUndo(sampleInk);
-                setSampleInk([]);
-              }}
-            >
-              <Eraser size={14} /> Neu schreiben
-            </button>
-          </div>
-          <button
-            className="primary full"
-            disabled={!sampleInk.length}
-            onClick={() => {
-              const samples = [
-                ...profileDraft,
-                {
-                  id: uid(),
-                  label: sampleLabels[profileStep],
-                  strokes: sampleInk,
-                },
-              ];
-              if (profileStep < sampleLabels.length - 1) {
-                setProfileDraft(samples);
-                setProfileStep(profileStep + 1);
-                setSampleInk([]);
-                setSampleUndo(null);
-              } else {
-                setData({ ...data, samples, onboardingDone: true });
-                close();
-                notify("Dein Schriftprofil ist gespeichert.");
-              }
-            }}
-          >
-            {profileStep === sampleLabels.length - 1
-              ? "Schriftprofil speichern"
-              : "Nächste Probe"}
-            <ArrowRight size={16} />
-          </button>
-        </Modal>
+          onSave={(samples) => {
+            update((d) => ({ ...d, samples, onboardingDone: true }));
+            close();
+            notify("Dein Schriftprofil ist gespeichert.");
+          }}
+        />
       )}
       {sheet === "newNotebook" && (
-        <Modal title="Neues Lernheft" onClose={close}>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (!newName.trim()) return;
-              const n = newNotebook(newName.trim());
-              setData({
-                ...data,
-                notebooks: [...data.notebooks, n],
-                activeNotebook: n.id,
-                activePage: n.pages[0].id,
-              });
-              setInLibrary(false);
-              setSelectedSubmission(null);
-              setZoom(1);
-              setPanelOpen(false);
-              close();
-            }}
-          >
-            <label className="field-label" htmlFor="notebook-name">
-              Name oder Fach
-            </label>
-            <input
-              autoFocus
-              id="notebook-name"
-              className="text-input"
-              maxLength={150}
-              placeholder="Z. B. Französisch"
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-            />
-            <button
-              className="primary full"
-              disabled={!newName.trim()}
-              type="submit"
-            >
-              <Plus size={17} /> Lernheft erstellen
-            </button>
-          </form>
-        </Modal>
+        <NewNotebookSheet
+          onClose={close}
+          onCreate={(name) => {
+            const n = newNotebook(name);
+            update((d) => ({
+              ...d,
+              notebooks: [...d.notebooks, n],
+              activeNotebook: n.id,
+              activePage: n.pages[0].id,
+            }));
+            setInLibrary(false);
+            resetPageView();
+            setPanelOpen(false);
+            close();
+          }}
+        />
       )}
       {sheet === "deleteNotebook" && notebookForDeletion && (
-        <Modal title="Lernheft löschen?" onClose={close}>
-          <p>
-            «{notebookForDeletion.name}» und alle seine Seiten werden auf diesem
-            Gerät gelöscht. Bereits geteilte Abgaben bleiben auf dem Server.
-          </p>
-          <div className="button-row">
-            <button className="secondary" autoFocus onClick={close}>
-              Abbrechen
-            </button>
-            <button
-              className="danger-button"
-              disabled={externalEdit}
-              onClick={deleteNotebook}
-            >
-              Lernheft löschen
-            </button>
-          </div>
-        </Modal>
+        <DeleteNotebookSheet
+          notebook={notebookForDeletion}
+          locked={externalEdit}
+          onClose={close}
+          onDelete={deleteNotebook}
+        />
       )}
-      {sheet === "task" && (
-        <Modal title="Aufgabe" onClose={close}>
-          <textarea
-            autoFocus
-            className="large-textarea"
-            placeholder="Aufgabe hier einfügen …"
-            value={draft}
-            maxLength={MAX_TEXT_LENGTH}
-            onChange={(e) => setDraft(e.target.value)}
-          />
-          <button
-            className="primary full"
-            onClick={() => {
-              patchPage({ task: draft.trim() });
-              close();
-            }}
-          >
-            Aufgabe speichern <Check size={17} />
-          </button>
-        </Modal>
+      {sheet === "task" && page && (
+        <TaskSheet
+          initial={page.task}
+          onClose={close}
+          onSave={(task) => {
+            patchPage({ task });
+            setTab("task");
+            close();
+          }}
+        />
+      )}
+      {sheet === "import" && (
+        <ImportSheet
+          submission={submission}
+          onClose={close}
+          onApply={applyResponse}
+        />
       )}
       {sheet === "submit" && prepared && (
-        <Modal
-          title={prepared.shared ? "Abgabe in ChatGPT" : "Abgabe"}
+        <SubmitSheet
+          prepared={prepared}
+          notebook={notebook}
+          provider={data.settings.provider}
+          chatUrl={chatUrl}
+          fileName={fileName}
           onClose={close}
-          wide
-        >
-          {prepared.shared && (
-            <div className="plugin-handoff">
-              <p role="status">
-                {handoffStep === "copy"
-                  ? "Die Seite ist bereit. Kopiere den Auftrag und sende ihn in deinem Chat."
-                  : "Setze den Auftrag in deinen Chat mit Inkloop ein und sende ihn ab. Die Rückmeldung erscheint hier."}
-              </p>
-              {handoffStep === "copy" ? (
-                <button
-                  className="primary"
-                  onClick={async () => {
-                    const copied = await copyText(pluginPrompt);
-                    setHandoffStep(copied ? "open" : "manual");
-                  }}
-                >
-                  <Copy size={15} /> Auftrag kopieren
-                </button>
-              ) : (
-                <>
-                  {handoffStep === "manual" && (
-                    <textarea
-                      className="large-textarea"
-                      aria-label="Auftrag für ChatGPT"
-                      value={pluginPrompt}
-                      readOnly
-                    />
-                  )}
-                  <a
-                    className="primary"
-                    href={chatLink(notebook?.chatUrl ?? "", "chatgpt")}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    {notebook?.chatUrl
-                      ? "Verknüpften Chat öffnen"
-                      : "ChatGPT öffnen"}
-                    <ExternalLink size={15} />
-                  </a>
-                  <button
-                    className="text-button small"
-                    onClick={async () => {
-                      if (await copyText(pluginPrompt)) {
-                        setError("");
-                        setHandoffStep("open");
-                      }
-                    }}
-                  >
-                    Auftrag erneut kopieren
-                  </button>
-                </>
-              )}
-            </div>
-          )}
-          <details className="manual-handoff" open={!prepared.shared}>
-            <summary>Bild und Anweisung</summary>
-            <div className="handoff-layout">
-              <a
-                href={prepared.url}
-                download={fileName}
-                className="submission-preview"
-              >
-                <img
-                  src={prepared.url}
-                  alt="Deine handschriftliche Antwort mit optionalen Schriftreferenzen"
-                />
-                <span>
-                  Deine Antwort als PNG <Download size={14} />
-                </span>
-              </a>
-              <div className="handoff-steps">
-                <div className="handoff-step">
-                  <div>
-                    <div className="button-row">
-                      <button
-                        className="secondary"
-                        onClick={async () => {
-                          try {
-                            if (
-                              !navigator.clipboard?.write ||
-                              typeof ClipboardItem === "undefined"
-                            )
-                              throw new Error();
-                            await navigator.clipboard.write([
-                              new ClipboardItem({ "image/png": prepared.blob }),
-                            ]);
-                            notify("Bild kopiert. Im Chat einfügen.");
-                          } catch {
-                            setError(
-                              "Bildkopieren wird hier nicht unterstützt. Nutze „Teilen“ oder „Speichern“ und hänge das Bild im Chat an.",
-                            );
-                          }
-                        }}
-                      >
-                        <Copy size={15} /> Bild kopieren
-                      </button>
-                      <button
-                        className="secondary"
-                        onClick={() => {
-                          const file = new File([prepared.blob], fileName, {
-                            type: "image/png",
-                          });
-                          if (navigator.canShare?.({ files: [file] })) {
-                            navigator
-                              .share({
-                                files: [file],
-                                title: "Inkloop – Meine Lösung",
-                              })
-                              .catch((e) => {
-                                if (e.name !== "AbortError")
-                                  setError(
-                                    "Teilen fehlgeschlagen. Speichere das Bild und hänge es im Chat an.",
-                                  );
-                              });
-                          } else {
-                            download(prepared.blob, fileName);
-                            notify("Bild wird heruntergeladen.");
-                          }
-                        }}
-                      >
-                        <Upload size={15} /> Teilen
-                      </button>
-                    </div>
-                  </div>
-                </div>
-                <div className="handoff-step">
-                  <div>
-                    <button
-                      className="secondary"
-                      onClick={() => copyText(prepared.prompt)}
-                    >
-                      <Copy size={15} /> Anweisung kopieren
-                    </button>
-                    <details className="prompt-details">
-                      <summary>Anweisung ansehen / manuell kopieren</summary>
-                      <textarea
-                        aria-label="Anweisung für deinen Chat"
-                        readOnly
-                        value={prepared.prompt}
-                      />
-                    </details>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </details>
-          {error && (
-            <p className="inline-error" role="alert">
-              {error}
-            </p>
-          )}
-          {!prepared.shared && (
-            <div className="handoff-footer">
-              <a
-                className="primary"
-                href={chatLink(currentChatUrl, data.settings.provider)}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                Chat öffnen <ExternalLink size={15} />
-              </a>
-            </div>
-          )}
-        </Modal>
+          notify={notify}
+          copyText={copyText}
+        />
       )}
       {sheet === "settings" && (
-        <Modal title="Einstellungen" onClose={close}>
-          {error === "restore-confirm" ? (
-            <>
-              <div className="info-note">
-                <Upload size={20} />
-                <span>
-                  Die Sicherung ersetzt deine Lernhefte und Schriftproben auf
-                  diesem Gerät.
-                </span>
-              </div>
-              <button className="secondary full" onClick={backup}>
-                <Download size={16} /> Aktuelle Daten zuerst sichern
-              </button>
-              <button
-                className="primary full"
-                onClick={() => {
-                  try {
-                    if (!restoreCandidate.current) return;
-                    setData(restoreCandidate.current);
-                    history.current.clear();
-                    setSelectedSubmission(null);
-                    close();
-                    notify("Sicherung wiederhergestellt.");
-                  } catch (e) {
-                    setError((e as Error).message);
-                  }
-                }}
-              >
-                Durch Sicherung ersetzen
-              </button>
-            </>
-          ) : (
-            <>
-              {hostedWorkspace && (
-                <div className="settings-section">
-                  <a
-                    className="secondary"
-                    href="/signout-with-chatgpt?return_to=%2F"
-                    target="_top"
-                  >
-                    Abmelden
-                  </a>
-                </div>
-              )}
-              <div className="settings-section">
-                <label className="setting-row appearance-row">
-                  <span>Darstellung</span>
-                  <select
-                    aria-label="Darstellung"
-                    value={theme}
-                    disabled={externalEdit}
-                    onChange={(event) => {
-                      const theme =
-                        event.target.value === "light" ? "light" : "dark";
-                      setData(
-                        (previous) =>
-                          previous && {
-                            ...previous,
-                            settings: { ...previous.settings, theme },
-                          },
-                      );
-                    }}
-                  >
-                    <option value="dark">Dunkel</option>
-                    <option value="light">Hell</option>
-                  </select>
-                </label>
-              </div>
-              <div className="settings-section">
-                <h3>Schreiben</h3>
-                <label className="setting-row">
-                  <span>
-                    Schriftprofil bei Abgabe mitsenden
-                    <small>
-                      {data.samples.length} beschriftete Referenzen im
-                      Seitenbild.
-                    </small>
-                  </span>
-                  <input
-                    type="checkbox"
-                    role="switch"
-                    checked={data.settings.includeProfile}
-                    onChange={(e) =>
-                      setData({
-                        ...data,
-                        settings: {
-                          ...data.settings,
-                          includeProfile: e.target.checked,
-                        },
-                      })
-                    }
-                  />
-                </label>
-              </div>
-              {notebook && (
-                <div className="settings-section">
-                  <h3>Chat für {notebook.name}</h3>
-                  <ChatForm
-                    key={data.settings.provider}
-                    initial={currentChatUrl}
-                    provider={data.settings.provider}
-                    onSave={(url) => {
-                      patchNotebook(
-                        data.settings.provider === "chatgpt"
-                          ? { chatUrl: url }
-                          : { claudeUrl: url },
-                      );
-                      notify("Chat-Link gespeichert.");
-                    }}
-                  />
-                </div>
-              )}
-              <div className="settings-section">
-                <h3>ChatGPT-Plugin</h3>
-                <p className="muted">
-                  {bridgeReady
-                    ? "Verbunden. Aktiviere Inkloop in deinem Chat."
-                    : "Derzeit getrennt. Du kannst Bilder manuell teilen."}
-                </p>
-                <p className="small muted">
-                  Nutze dasselbe Konto. Geteilte Abgaben und Rückmeldungen
-                  liegen privat auf dem Server.
-                </p>
-              </div>
-              <div className="settings-section">
-                <h3>Deine Daten</h3>
-                <p className="muted">
-                  Lernhefte liegen lokal. Safari und die installierte App können
-                  getrennte Speicher nutzen.
-                </p>
-                <div className="button-row">
-                  <button className="secondary" onClick={backup}>
-                    <Download size={15} /> Sicherung herunterladen
-                  </button>
-                  <button
-                    className="secondary"
-                    onClick={() => importFile.current?.click()}
-                  >
-                    <Upload size={15} /> Wiederherstellen
-                  </button>
-                </div>
-                <button
-                  className="text-button small"
-                  onClick={async () => {
-                    try {
-                      const granted = await navigator.storage?.persist?.();
-                      notify(
-                        granted
-                          ? "Dauerhafter Speicher ist aktiviert."
-                          : "Safari verwaltet den Speicher. Bitte weiterhin Sicherungen erstellen.",
-                      );
-                    } catch {
-                      notify("Bitte regelmässig Sicherungen erstellen.");
-                    }
-                  }}
-                >
-                  <ShieldCheck size={14} /> Dauerhaften Speicher anfragen
-                </button>
-              </div>
-              <button className="secondary full" onClick={() => open("help")}>
-                <HelpCircle size={16} /> Installation & Hilfe
-              </button>
-            </>
-          )}
-        </Modal>
+        <SettingsSheet
+          data={data}
+          notebook={notebook}
+          chatUrl={chatUrl}
+          restoring={restoring}
+          hosted={hostedWorkspace}
+          locked={externalEdit}
+          bridgeReady={bridgeReady}
+          onClose={close}
+          onSettings={patchSettings}
+          onSaveChat={(url) => {
+            patchNotebook(
+              data.settings.provider === "chatgpt"
+                ? { chatUrl: url }
+                : { claudeUrl: url },
+            );
+            notify("Chat-Link gespeichert.");
+          }}
+          onBackup={backup}
+          onPickRestore={() => importFile.current?.click()}
+          onConfirmRestore={() => {
+            if (!restoreCandidate.current) return;
+            setData(restoreCandidate.current);
+            history.current.clear();
+            resetPageView();
+            close();
+            notify("Sicherung wiederhergestellt.");
+          }}
+          onHelp={() => open("help")}
+          notify={notify}
+        />
       )}
       {sheet === "pageMenu" && notebook && page && (
-        <Modal title="Seitenoptionen" onClose={close}>
-          <label className="field-label">
-            Seitentitel
-            <input
-              className="text-input page-title"
-              value={page.title}
-              maxLength={150}
-              aria-label="Seitentitel"
-              onChange={(e) => patchPage({ title: e.target.value })}
-            />
-          </label>
-          <div className="page-settings">
-            <label>
-              Sprache
-              <select
-                aria-label="Seitensprache"
-                value={page.language ?? notebook.language}
-                onChange={(e) =>
-                  patchPage({ language: e.target.value as Page["language"] })
-                }
-              >
-                <option value="de">Deutsch</option>
-                <option value="en">English</option>
-              </select>
-            </label>
-            <div className="paper-controls">
-              <IconButton
-                label="Verkleinern"
-                disabled={zoom <= 1}
-                onClick={() => setZoom((z) => Math.max(1, z - 0.25))}
-              >
-                <ZoomOut size={15} />
-              </IconButton>
-              <span>{Math.round(zoom * 100)} %</span>
-              <IconButton
-                label="Vergrössern"
-                disabled={zoom >= 2}
-                onClick={() => setZoom((z) => Math.min(2, z + 0.25))}
-              >
-                <ZoomIn size={15} />
-              </IconButton>
-              <span className="tiny-divider" />
-              <select
-                aria-label="Papierart"
-                value={page.paper}
-                onChange={(e) =>
-                  patchPage({ paper: e.target.value as Page["paper"] })
-                }
-              >
-                <option value="grid">Kariert</option>
-                <option value="ruled">Liniert</option>
-                <option value="dots">Punkte</option>
-                <option value="blank">Blanko</option>
-              </select>
-            </div>
-          </div>
-          <button
-            className="menu-action"
-            onClick={() => {
-              const p = {
-                ...structuredClone(page),
+        <PageMenuSheet
+          notebook={notebook}
+          page={page}
+          zoom={zoom}
+          busy={busy}
+          error={error}
+          onClose={close}
+          onZoom={setZoom}
+          onPatch={patchPage}
+          onDuplicate={() => {
+            const p = {
+              ...structuredClone(page),
+              id: uid(),
+              title: page.title.slice(0, 142) + " – Kopie",
+              submissions: [],
+              updatedAt: Date.now(),
+            };
+            patchNotebook({ pages: [...notebook.pages, p] });
+            navigatePage(p.id, 1);
+            close();
+          }}
+          onSaveImage={async () => {
+            setBusy(true);
+            try {
+              const s: Submission = {
                 id: uid(),
-                title: page.title.slice(0, 142) + " – Kopie",
-                submissions: [],
-                updatedAt: Date.now(),
+                createdAt: Date.now(),
+                strokes: page.strokes,
+                task: page.task,
+                transcription: "",
+                feedback: "",
+                nextTask: "",
               };
-              patchNotebook({ pages: [...notebook.pages, p] });
-              navigatePage(p.id);
-              close();
-            }}
-          >
-            <Copy size={18} />
-            <span>
-              Seite duplizieren
-              <small>Handschrift und Aufgabe übernehmen.</small>
-            </span>
-          </button>
-          <button
-            className="menu-action"
-            disabled={!page.strokes.length}
-            onClick={async () => {
-              setBusy(true);
-              try {
-                const s: Submission = {
-                  id: uid(),
-                  createdAt: Date.now(),
-                  strokes: page.strokes,
-                  task: page.task,
-                  transcription: "",
-                  feedback: "",
-                  nextTask: "",
-                };
-                const b = await submissionImage(notebook, s, []);
-                download(b, fileName);
-                close();
-              } catch (e) {
-                setError((e as Error).message);
-              } finally {
-                setBusy(false);
-              }
-            }}
-          >
-            <Download size={18} />
-            <span>
-              Handschrift als Bild speichern
-              <small>Gut lesbares PNG auf weissem Papier.</small>
-            </span>
-          </button>
-          <button
-            className="menu-action"
-            disabled={!page.strokes.length}
-            onClick={() => {
-              changeInk([]);
-              close();
-              notify("Seite geleert. Mit Rückgängig wiederherstellbar.");
-            }}
-          >
-            <Eraser size={18} />
-            <span>
-              Handschrift leeren
-              <small>Kannst du anschliessend rückgängig machen.</small>
-            </span>
-          </button>
-          <details className="danger-details">
-            <summary>
-              <Trash2 size={16} /> Seite löschen
-            </summary>
-            <p>Beim lokalen Löschen bleiben geteilte Abgaben auf dem Server.</p>
-            <div className="button-row">
-              <button
-                className="secondary"
-                disabled={busy}
-                onClick={() => void deletePage(false)}
-              >
-                Nur auf diesem Gerät löschen
-              </button>
-              <button
-                className="danger-button"
-                disabled={busy}
-                onClick={() => void deletePage(true)}
-              >
-                Seite und Serverkopien löschen
-              </button>
-            </div>
-          </details>
-          {error && <p className="inline-error">{error}</p>}
-        </Modal>
+              download(await submissionImage(notebook, s, []), fileName);
+              setBusy(false);
+              closeSheet("pageMenu");
+            } catch (e) {
+              setError((e as Error).message);
+            } finally {
+              setBusy(false);
+            }
+          }}
+          onClear={() => {
+            changeInk([]);
+            close();
+            notify("Seite geleert.", "info", {
+              label: "Rückgängig",
+              run: () => undo(),
+            });
+          }}
+          onDelete={(includeServer) => void deletePage(includeServer)}
+        />
       )}
-      {sheet === "help" && (
-        <Modal title="Installation und Hilfe" onClose={close}>
-          <div className="help-section">
-            <span className="step-number">1</span>
-            <div>
-              <h3>Zum Home-Bildschirm</h3>
-              <p>
-                Öffne Inkloop in Safari. Tippe auf Teilen, dann auf „Zum
-                Home-Bildschirm“. Öffne Inkloop danach über das neue Symbol.
-                Nach dem ersten vollständigen Laden funktioniert das Lernheft
-                auch offline.
-              </p>
-            </div>
-          </div>
-          <div className="help-section">
-            <span className="step-number">2</span>
-            <div>
-              <h3>Chat daneben öffnen</h3>
-              <p>
-                Nutze den iPad-Fenstermodus oder Split View für Inkloop und
-                deinen Chat. Aufgaben kopierst du ins Lernheft. Mit „Antwort
-                abgeben“ bereitest du Bild und Anweisung vor.
-              </p>
-            </div>
-          </div>
-          <div className="help-section">
-            <span className="step-number">3</span>
-            <div>
-              <h3>Bild und Antwort übertragen</h3>
-              <p>
-                Füge Bild und Anweisung in deinen bestehenden Chat ein. Falls
-                Bildkopieren nicht unterstützt wird, speichere das PNG und hänge
-                es dort an. Die Antwort kopierst du mit „KI-Antwort übernehmen“
-                zurück.
-              </p>
-            </div>
-          </div>
-          <div className="info-note">
-            <CircleCheck size={20} />
-            <span>
-              Inkloop ruft keine kostenpflichtige KI-API auf. Die normalen
-              Nachrichten- und Upload-Limits deines Abos gelten weiterhin. Mit
-              dem Inkloop-Plugin kann ChatGPT abgegebene Seiten lesen, Aufgaben
-              senden und Antworten zurückschreiben. Du startest den Auftrag in
-              deinem Original-Chat. Ohne Plugin und bei Claude nutzt du die
-              Bildübergabe.
-            </span>
-          </div>
-          <details className="help-detail">
-            <summary>Was bedeutet das Schriftprofil?</summary>
-            <p>
-              Deine vier beschrifteten Proben werden auf Wunsch unter dem
-              Antwortbild ergänzt. Die KI kann sie zum Vergleichen nutzen. Das
-              ist kein Modelltraining, keine Garantie für perfekte Erkennung und
-              kann die Bildgrösse erhöhen.
-            </p>
-          </details>
-          <details className="help-detail">
-            <summary>Formeln, Tabellen und Mindmaps</summary>
-            <p>
-              Das Originalbild bewahrt alle Positionen und Verbindungen. Die
-              Anweisung fordert die KI auf, Formeln, Tabellen und Beziehungen zu
-              erhalten und Unklarheiten zu markieren. Prüfe besonders
-              Vorzeichen, Zahlen und Soll/Haben-Spalten.
-            </p>
-          </details>
-          <details className="help-detail">
-            <summary>Schreiben und Speichern</summary>
-            <p>
-              Standardmässig schreibt nur Pencil oder Maus. Finger scrollen. Für
-              Fingereingabe aktiviere die Option in den Einstellungen. Der
-              Radierer entfernt ganze Striche. Vergrössern hilft bei kleinen
-              Zeichen. Inkloop speichert nach jedem abgeschlossenen Strich.
-              Sichere deine Lernhefte regelmässig als JSON-Datei.
-            </p>
-          </details>
-        </Modal>
-      )}
-      {toast && (
-        <div className="toast" role="status">
-          <Check size={17} />
-          {toast}
-        </div>
-      )}
+      {sheet === "help" && <HelpSheet onClose={close} />}
+      <Toast toast={toast} onDismiss={() => setToast(null)} />
     </>
-  );
-}
-
-function ChatForm({
-  initial,
-  provider,
-  onSave,
-}: {
-  initial: string;
-  provider: "chatgpt" | "claude";
-  onSave: (url: string) => void;
-}) {
-  const [value, setValue] = useState(initial),
-    [error, setError] = useState("");
-  return (
-    <form
-      onSubmit={(e) => {
-        e.preventDefault();
-        try {
-          if (value.trim()) {
-            const url = new URL(chatLink(value, provider));
-            if (
-              (provider === "chatgpt" && url.hostname === "claude.ai") ||
-              (provider === "claude" && url.hostname !== "claude.ai")
-            )
-              throw new Error(
-                "Bitte einen Link zum ausgewählten Anbieter verwenden. Den Anbieter wechselst du im Lernbereich.",
-              );
-          }
-          onSave(value.trim());
-          setError("");
-        } catch (e) {
-          setError((e as Error).message);
-        }
-      }}
-    >
-      <input
-        className="text-input"
-        aria-label="Link zum bestehenden Chat"
-        value={value}
-        maxLength={2000}
-        onChange={(e) => setValue(e.target.value)}
-        placeholder="https://chatgpt.com/c/… oder https://claude.ai/chat/…"
-      />
-      <button className="secondary" type="submit">
-        <Link2 size={15} /> Chat-Link speichern
-      </button>
-      {error && (
-        <p className="inline-error" role="alert">
-          {error}
-        </p>
-      )}
-    </form>
-  );
-}
-function RichText({ text }: { text: string }) {
-  return (
-    <Suspense fallback={<div className="rich-text">{text}</div>}>
-      <MarkdownText text={text} />
-    </Suspense>
   );
 }

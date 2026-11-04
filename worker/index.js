@@ -123,17 +123,41 @@ async function latestSubmission(bucket, prefix) {
   return { id, notebookId, pageId, createdAt, subject };
 }
 
+// pages/<pageId>/<submissionId> markers let a page find its submissions
+// without reading every submission of the account.
+const pageMarker = (prefix, pageId, id) =>
+  prefix + "pages/" + pageId + "/" + id;
+async function indexPages(bucket, prefix) {
+  const done = prefix + "pages/.indexed";
+  if (await bucket.get(done)) return;
+  for await (const { value } of records(bucket, prefix + "submissions/"))
+    if (validId(value.pageId) && validId(value.id))
+      await bucket.put(pageMarker(prefix, value.pageId, value.id), "");
+  await bucket.put(done, "");
+}
 async function deletePageCopies(bucket, prefix, pageId, submissionIds) {
-  const ids = new Set(submissionIds);
-  for await (const { value } of records(bucket, prefix + "submissions/")) {
-    if (value.pageId === pageId) ids.add(value.id);
-    else ids.delete(value.id);
+  await indexPages(bucket, prefix);
+  const markers = prefix + "pages/" + pageId + "/";
+  const candidates = new Set(submissionIds);
+  let cursor;
+  do {
+    const list = await bucket.list({ prefix: markers, cursor });
+    for (const { key } of list.objects)
+      candidates.add(key.slice(markers.length));
+    cursor = list.truncated ? list.cursor : undefined;
+  } while (cursor);
+  const ids = new Set();
+  for (const id of candidates) {
+    const metadata = await read(bucket, submissionKey(prefix, id) + ".json");
+    // Never delete a submission that belongs to another page.
+    if (!metadata || metadata.pageId === pageId) ids.add(id);
   }
   for (const id of ids) {
     await put(bucket, deletedKey(prefix, id), true);
     const key = submissionKey(prefix, id);
     await bucket.delete(key + ".json");
     await bucket.delete(key + ".png");
+    await bucket.delete(pageMarker(prefix, pageId, id));
   }
   for await (const { key, value } of records(bucket, prefix + "events/")) {
     if (value.type === "response" && value.pageId === pageId)
@@ -542,10 +566,14 @@ async function api(request, env) {
       onlyIf: firstWrite,
       httpMetadata: { contentType: "application/json" },
     });
-    if (created) await put(bucket, prefix + "latest.json", { id: metadata.id });
+    if (created) {
+      await put(bucket, prefix + "latest.json", { id: metadata.id });
+      await bucket.put(pageMarker(prefix, metadata.pageId, metadata.id), "");
+    }
     if (await bucket.get(tombstone)) {
       await bucket.delete(key + ".json");
       await bucket.delete(key + ".png");
+      await bucket.delete(pageMarker(prefix, metadata.pageId, metadata.id));
       const latest = await read(bucket, prefix + "latest.json");
       if (latest?.id === metadata.id)
         await bucket.delete(prefix + "latest.json");

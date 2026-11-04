@@ -295,7 +295,20 @@ test("complete notebook flow: draw, undo/redo, persist and save the original sub
   stored = (await loadData())!;
   assert.equal(stored.notebooks[0].pages[0].submissions.length, 1);
   assert.equal(stored.notebooks[0].pages[0].submissions[0].strokes.length, 1);
-  assert.ok(!document.body.textContent?.includes("KI-Antwort übernehmen"));
+  await click("Schliessen");
+  await click("Feedback");
+  assert.ok(document.body.textContent?.includes("Noch kein Feedback"));
+  await click("KI-Antwort übernehmen");
+  await setInput(
+    document.querySelector("dialog textarea") as HTMLTextAreaElement,
+    '```json\n{"transcription":"x = 3","feedback":"Prüfe −3.","next_task":"Löse x² = 16."}\n```',
+  );
+  await click("Im Lernheft speichern");
+  assert.ok(document.body.textContent?.includes("Prüfe −3."));
+  assert.ok(document.body.textContent?.includes("Löse x² = 16."));
+  await click("Abschrift");
+  assert.ok(document.body.textContent?.includes("x = 3"));
+  await click("Aufgabe");
   await click("Seiten");
   await click("Neue Seite");
   // Finger contact cannot create ink in Pencil-only mode.
@@ -526,7 +539,8 @@ test("plugin responses arrive automatically and new tasks preserve an existing h
       ),
     );
     await click("Mathematik");
-    assert.ok(!document.body.textContent?.includes("Berücksichtige auch −3."));
+    await click("Lernbereich");
+    assert.ok(document.body.textContent?.includes("Berücksichtige auch −3."));
     await act(async () => {
       window.dispatchEvent(new window.Event("focus"));
       await delay(100);
@@ -824,4 +838,53 @@ test("the library opens first and each notebook remembers its last page", async 
     host.remove();
     await window.happyDOM.abort();
   }
+});
+
+test("storage migrates the old single record and stays consistent with two writers", async () => {
+  const { newPage } = await import("../src/model");
+  const legacy = initialData();
+  legacy.notebooks[0].pages[0].task = "Legacy task";
+  await new Promise<void>((resolve, reject) => {
+    const open = indexedDB.open("inkloop-v1", 2);
+    open.onsuccess = () => {
+      const tx = open.result.transaction("data", "readwrite");
+      tx.objectStore("data").put(legacy, "legacy-ws");
+      tx.oncomplete = () => {
+        open.result.close();
+        resolve();
+      };
+      tx.onerror = () => reject(tx.error);
+    };
+    open.onerror = () => reject(open.error);
+  });
+  const migrated = (await loadData("legacy-ws"))!;
+  assert.equal(migrated.notebooks[0].pages[0].task, "Legacy task");
+  const { readStoredData } = await import("../src/storage");
+  const raw = (await readStoredData("legacy-ws")) as typeof legacy;
+  assert.equal(raw.notebooks[0].pages[0].task, "Legacy task");
+
+  // Window A loaded `migrated`. Window B replaces every page meanwhile.
+  const other = initialData();
+  await saveData(other, "legacy-ws", null);
+  const edited = {
+    ...migrated,
+    notebooks: migrated.notebooks.map((n, i) =>
+      i ? n : { ...n, pages: [...n.pages, newPage("Neu")] },
+    ),
+  };
+  await saveData(edited, "legacy-ws", migrated);
+  const result = (await loadData("legacy-ws"))!;
+  assert.equal(result.notebooks[0].pages.length, 2);
+  assert.equal(
+    result.notebooks[1].pages[0].id,
+    migrated.notebooks[1].pages[0].id,
+  );
+
+  // An unchanged page is not rewritten on a trusted incremental save.
+  const next = { ...result, activePage: result.activePage };
+  await saveData(next, "legacy-ws", result);
+  assert.equal(
+    (await loadData("legacy-ws"))!.notebooks[0].pages[1].title,
+    "Neu",
+  );
 });

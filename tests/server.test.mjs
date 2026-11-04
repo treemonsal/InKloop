@@ -372,3 +372,26 @@ test("chat responses older than the retention window are pruned on the next writ
   assert.equal(events.events.length, 1);
   assert.equal(events.events[0].submissionId, "fresh");
 });
+
+test("page deletion finds legacy submissions and never removes another page", async () => {
+  const actor = "page-index";
+  await submit(actor, "legacy", "page-a");
+  await submit(actor, "kept", "page-b");
+  const prefix = "users/" + actor + "/";
+  // Simulate data uploaded before page markers existed.
+  env.BUCKET.objects.delete(prefix + "pages/page-a/legacy");
+  const response = await worker.fetch(
+    request(
+      "/api/bridge/page/page-a",
+      "DELETE",
+      JSON.stringify({ submissionIds: ["kept"] }),
+      actor,
+    ),
+    env,
+  );
+  assert.equal(response.status, 200);
+  const read = (id) =>
+    rpc("inkloop_read_submission", { submission_id: id }, actor);
+  assert.equal((await read("legacy")).result.isError, true);
+  assert.ok(!(await read("kept")).result.isError);
+});
