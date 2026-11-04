@@ -14,6 +14,8 @@ import {
   drawStroke,
   paintSvgStroke,
 } from "./ink";
+export const WRITING_PAUSE_MS = 1500;
+
 type PaperTouch = Touch & { touchType?: "direct" | "stylus" };
 type Contact = {
   x: number;
@@ -26,6 +28,7 @@ export type Tool = "pen" | "marker" | "eraser" | "line";
 type Props = {
   strokes: Stroke[];
   onChange: (s: Stroke[]) => void;
+  onStrokeActive?: (active: boolean) => void;
   tool: Tool;
   color: string;
   width: number;
@@ -40,6 +43,7 @@ type Props = {
 export default function InkCanvas({
   strokes,
   onChange,
+  onStrokeActive,
   tool,
   color,
   width,
@@ -53,6 +57,8 @@ export default function InkCanvas({
 }: Props) {
   const canvas = useRef<HTMLCanvasElement>(null),
     committedLayer = useRef<HTMLCanvasElement>(null),
+    penLayer = useRef<HTMLCanvasElement>(null),
+    penPreview = useRef({ id: "", count: 0 }),
     previewPath = useRef<SVGPathElement>(null),
     painted = useRef<{ strokes: Stroke[]; light: boolean } | null>(null),
     live = useRef<Stroke | null>(null),
@@ -60,6 +66,7 @@ export default function InkCanvas({
     base = useRef(strokes),
     pointer = useRef<number | null>(null),
     pointerType = useRef(""),
+    penBounds = useRef<DOMRect | null>(null),
     touches = useRef(new Map<number, Contact>()),
     touchLocked = useRef(false),
     nativeHandledPointers = useRef(false),
@@ -68,9 +75,55 @@ export default function InkCanvas({
     lastPenUp = useRef(-Infinity),
     scratchStart = useRef<number | null>(null),
     frame = useRef(0),
+    pendingInk = useRef(new Set<string>()),
+    smoothingTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+      undefined,
+    ),
     working = useRef<Stroke[]>(strokes);
   const change = useRef(onChange);
   change.current = onChange;
+  const strokeActivity = useRef(onStrokeActive);
+  strokeActivity.current = onStrokeActive;
+  const paintPenPreview = () => {
+    const active = live.current;
+    const layer = committedLayer.current;
+    const overlay = penLayer.current;
+    const ctx = overlay?.getContext("2d");
+    if (overlay && ctx && layer) {
+      if (overlay.width !== layer.width || overlay.height !== layer.height) {
+        overlay.width = layer.width;
+        overlay.height = layer.height;
+        penPreview.current = { id: "", count: 0 };
+      }
+      ctx.setTransform(
+        overlay.width / PAGE_W,
+        0,
+        0,
+        overlay.height / PAGE_H,
+        0,
+        0,
+      );
+      const id = active?.tool === "pen" ? active.id : "";
+      if (penPreview.current.id !== id) {
+        ctx.clearRect(0, 0, PAGE_W, PAGE_H);
+        penPreview.current = { id, count: 0 };
+      }
+      if (
+        active?.tool === "pen" &&
+        active.points.length > penPreview.current.count
+      ) {
+        const start = Math.max(0, penPreview.current.count - 1);
+        drawStroke(
+          ctx,
+          { ...active, points: active.points.slice(start) },
+          false,
+          displayInkColor(active.color, light),
+          true,
+        );
+        penPreview.current.count = active.points.length;
+      }
+    }
+  };
   const paint = () => {
     const layer = committedLayer.current;
     const previous = painted.current;
@@ -98,13 +151,22 @@ export default function InkCanvas({
         const start = append ? existing.length : 0;
         for (let i = start; i < working.current.length; i++) {
           const stroke = working.current[i];
-          drawStroke(ctx, stroke, false, displayInkColor(stroke.color, light));
+          drawStroke(
+            ctx,
+            stroke,
+            false,
+            displayInkColor(stroke.color, light),
+            pendingInk.current.has(stroke.id),
+          );
         }
         painted.current = { strokes: working.current, light };
       }
     }
+    paintPenPreview();
+    const active = live.current;
     if (previewPath.current) {
-      if (live.current) paintSvgStroke(previewPath.current, live.current);
+      if (active && active.tool !== "pen")
+        paintSvgStroke(previewPath.current, active);
       else previewPath.current.removeAttribute("d");
     }
   };
@@ -113,6 +175,7 @@ export default function InkCanvas({
     working.current = strokes;
     paint();
   }, [strokes, light]);
+  useEffect(() => () => clearTimeout(smoothingTimer.current), []);
   const draw = useRef(paint);
   draw.current = paint;
   useLayoutEffect(() => {
@@ -154,6 +217,7 @@ export default function InkCanvas({
       cancelAnimationFrame(frame.current);
       frame.current = 0;
       if (pointer.current !== null) {
+        strokeActivity.current?.(false);
         const result = live.current
           ? [...working.current, live.current]
           : working.current;
@@ -214,9 +278,24 @@ export default function InkCanvas({
     if (stroke.tool === "line") stroke.points = [stroke.points[0], p];
     else stroke.points.push(p);
   };
+  const scheduleSmoothing = () => {
+    if (pendingInk.current.size) {
+      clearTimeout(smoothingTimer.current);
+      smoothingTimer.current = setTimeout(() => {
+        if (pointer.current !== null) return;
+        pendingInk.current.clear();
+        painted.current = null;
+        draw.current();
+      }, WRITING_PAUSE_MS);
+    }
+  };
   const begin = (e: PointerEvent<HTMLCanvasElement>, p: Point) => {
+    clearTimeout(smoothingTimer.current);
     pointer.current = e.pointerId;
     pointerType.current = e.pointerType;
+    penBounds.current =
+      e.pointerType === "pen" ? e.currentTarget.getBoundingClientRect() : null;
+    strokeActivity.current?.(true);
     scratchStart.current =
       scratchToErase && tool === "pen" ? e.timeStamp : null;
     working.current = base.current;
@@ -234,9 +313,11 @@ export default function InkCanvas({
   const cancelFingerInk = () => {
     if (pointer.current === null || pointerType.current !== "touch") return;
     pointer.current = null;
+    strokeActivity.current?.(false);
     live.current = null;
     eraserPoint.current = null;
     working.current = base.current;
+    scheduleSmoothing();
     redraw();
   };
   const fingers = () =>
@@ -356,6 +437,8 @@ export default function InkCanvas({
           scroller.contains(touch.target),
       );
       if (!localTouches.length) return;
+      // Suppress Safari's selection gesture even for native Pencil touches.
+      // Pointer events still provide the ink; only fingers enter gesture tracking.
       if (
         (event.type === "touchstart" || event.type === "touchmove") &&
         event.cancelable
@@ -491,10 +574,12 @@ export default function InkCanvas({
     if (pointer.current !== e.pointerId) return;
     e.preventDefault();
     const coalesced = e.nativeEvent.getCoalescedEvents?.();
-    const rect = e.currentTarget.getBoundingClientRect();
-    for (const event of coalesced ?? []) appendPoint(point(event, rect));
-    appendPoint(point(e, rect));
-    redraw();
+    const rect = penBounds.current ?? e.currentTarget.getBoundingClientRect();
+    for (const event of coalesced?.length ? coalesced : [e]) {
+      appendPoint(point(event, rect));
+    }
+    if (live.current?.tool === "pen") paintPenPreview();
+    else redraw();
   };
   const finish = (e: PointerEvent<HTMLCanvasElement>) => {
     if (e.pointerType === "touch") {
@@ -551,9 +636,13 @@ export default function InkCanvas({
     const result = stroke ? [...working.current, stroke] : working.current;
     const changed = result !== base.current;
     pointer.current = null;
+    penBounds.current = null;
+    strokeActivity.current?.(false);
     scratchStart.current = null;
     live.current = null;
     eraserPoint.current = null;
+    if (stroke?.tool === "pen") pendingInk.current.add(stroke.id);
+    scheduleSmoothing();
     base.current = result;
     working.current = result;
     paint();
@@ -569,6 +658,13 @@ export default function InkCanvas({
       <div className="paper-margin" />
       <canvas
         ref={committedLayer}
+        className="paper-ink"
+        width={PAGE_W}
+        height={PAGE_H}
+        aria-hidden="true"
+      />
+      <canvas
+        ref={penLayer}
         className="paper-ink"
         width={PAGE_W}
         height={PAGE_H}

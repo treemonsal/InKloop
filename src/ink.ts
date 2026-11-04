@@ -77,8 +77,9 @@ function fillPenStroke(ctx: PathWriter, points: Point[], width: number) {
   }
 }
 
-function traceStroke(path: PathWriter, stroke: Stroke) {
-  const points = stroke.tool === "pen" ? strokePath(stroke) : stroke.points;
+function traceStroke(path: PathWriter, stroke: Stroke, preview = false) {
+  const points =
+    stroke.tool === "pen" && !preview ? strokePath(stroke) : stroke.points;
   if (!points.length || (stroke.tool === "marker" && points.length < 2)) return;
   const first = points[0];
   if (points.length === 1) {
@@ -107,6 +108,7 @@ export function drawStroke(
   stroke: Stroke,
   light = false,
   color = light ? colorMap[stroke.color] || stroke.color : stroke.color,
+  preview = false,
 ) {
   ctx.save();
   ctx.lineCap = stroke.tool === "marker" ? "butt" : "round";
@@ -129,6 +131,7 @@ export function drawStroke(
       },
     },
     stroke,
+    preview,
   );
   if (paint) ctx[paint]();
   ctx.restore();
@@ -156,6 +159,7 @@ export function paintSvgStroke(path: SVGPathElement, stroke: Stroke) {
       },
     },
     stroke,
+    true,
   );
   path.setAttribute("d", commands.join(""));
   path.style.setProperty("--ink-light", displayInkColor(stroke.color, true));

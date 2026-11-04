@@ -53,7 +53,7 @@ import {
   type BridgeEvent,
 } from "./bridge";
 import { useLiquidChrome } from "./useLiquidChrome";
-import InkCanvas, { type Tool } from "./Canvas";
+import InkCanvas, { WRITING_PAUSE_MS, type Tool } from "./Canvas";
 import {
   type AppData,
   type Notebook,
@@ -238,6 +238,8 @@ export default function App() {
         ?.setAttribute("content", background);
   }, [theme]);
   const workspace = useRef<string | null>(null);
+  const strokeActive = useRef(false);
+  const lastStrokeEnd = useRef(-Infinity);
   const current = useRef(data);
   current.current = data;
   const lastSaved = useRef<AppData | null>(null),
@@ -335,7 +337,16 @@ export default function App() {
     if (!data || data === lastSaved.current || externalEdit) return;
     setSaving("saving");
     clearTimeout(timer.current);
-    timer.current = setTimeout(() => persist(data), 350);
+    const saveWhenIdle = () => {
+      const remaining =
+        WRITING_PAUSE_MS - (performance.now() - lastStrokeEnd.current);
+      if (strokeActive.current || remaining > 0) {
+        timer.current = setTimeout(saveWhenIdle, Math.max(50, remaining));
+      } else {
+        persist(data);
+      }
+    };
+    timer.current = setTimeout(saveWhenIdle, 350);
     return () => clearTimeout(timer.current);
   }, [data, persist, externalEdit]);
   useEffect(() => {
@@ -521,6 +532,7 @@ export default function App() {
     );
   const changeInk = (strokes: Stroke[]) => {
     if (!page || externalEdit) return;
+    lastStrokeEnd.current = performance.now();
     const h = history.current.get(page.id) || { past: [], future: [] };
     h.past.push(page.strokes);
     if (h.past.length > 60) h.past.shift();
@@ -965,7 +977,7 @@ export default function App() {
         <main className="library">
           <header className="library-top">
             <div className="library-brand">
-              <Logo /> Inkloop <small className="library-version">V19</small>
+              <Logo /> Inkloop <small className="library-version">V24</small>
             </div>
             <div className="topbar-actions">
               <IconButton label="Deine Handschrift" onClick={startProfile}>
@@ -1310,6 +1322,9 @@ export default function App() {
                         key={page.id}
                         strokes={page.strokes}
                         onChange={changeInk}
+                        onStrokeActive={(active) => {
+                          strokeActive.current = active;
+                        }}
                         tool={tool}
                         color={color}
                         light={light}

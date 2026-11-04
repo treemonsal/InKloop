@@ -217,7 +217,7 @@ test("complete notebook flow: draw, undo/redo, persist and save the original sub
     finger("pointerup", 5, 100, 140);
     finger("pointermove", 6, 160, 130);
     finger("pointerup", 6, 160, 130);
-    await delay(400);
+    await delay(1650);
   });
   assert.ok(paperScroll.scrollTop > 0);
   assert.equal((await loadData())!.notebooks[0].pages[0].strokes.length, 0);
@@ -225,7 +225,7 @@ test("complete notebook flow: draw, undo/redo, persist and save the original sub
     finger("pointerdown", 5, 100, 180);
     finger("pointermove", 5, 106, 184);
     finger("pointerup", 5, 112, 187);
-    await delay(400);
+    await delay(1650);
   });
   assert.equal((await loadData())!.notebooks[0].pages[0].strokes.length, 1);
   await click("Rückgängig");
@@ -233,29 +233,47 @@ test("complete notebook flow: draw, undo/redo, persist and save the original sub
   await act(async () => {
     send("pointerdown", 60, 100);
     send("pointerup", 60, 100);
-    await delay(400);
+    await delay(1650);
   });
   assert.equal((await loadData())!.notebooks[0].pages[0].strokes.length, 0);
   await click("Stift");
-  await act(async () => {
-    send("pointerdown", 80, 150);
-    send("pointermove", 130, 170);
-    send("pointermove", 160, 150);
-    send("pointerup", 190, 145);
-    await delay(450);
-  });
+  const livePoints: number[] = [];
+  const originalArc = ctx.arc;
+  ctx.arc = ((x: number) => livePoints.push(x)) as typeof ctx.arc;
+  try {
+    await act(async () => {
+      send("pointerdown", 80, 150);
+      send("pointermove", 130, 170);
+      send("pointermove", 160, 150);
+      assert.ok(
+        livePoints.includes(160),
+        "raw position appears before pointerup",
+      );
+      assert.ok(
+        !livePoints.includes(145),
+        "no interpolated midpoint during input",
+      );
+      send("pointerup", 190, 145);
+      await delay(500);
+      assert.ok(!livePoints.includes(145), "short pause keeps raw ink");
+      await delay(1150);
+      assert.ok(livePoints.includes(145), "smoothing starts after the pause");
+    });
+  } finally {
+    ctx.arc = originalArc;
+  }
   let stored = (await loadData())!;
   assert.equal(stored.notebooks[0].pages[0].strokes.length, 1);
   assert.equal(stored.notebooks[0].pages[0].strokes[0].points.at(-1)?.x, 190);
   assert.equal(stored.notebooks[0].pages[0].task, "Solve x² = 9.");
   await click("Rückgängig");
   await act(async () => {
-    await delay(400);
+    await delay(1650);
   });
   assert.equal((await loadData())!.notebooks[0].pages[0].strokes.length, 0);
   await click("Wiederholen");
   await act(async () => {
-    await delay(400);
+    await delay(1650);
   });
   assert.equal((await loadData())!.notebooks[0].pages[0].strokes.length, 1);
   await act(async () => {
@@ -264,7 +282,7 @@ test("complete notebook flow: draw, undo/redo, persist and save the original sub
     send("pointermove", 107, 156);
     send("pointermove", 164, 160);
     send("pointerup", 109, 162);
-    await delay(400);
+    await delay(1650);
   });
   const crossed = (await loadData())!.notebooks[0].pages[0].strokes;
   assert.equal(crossed.length, 2);
@@ -303,7 +321,7 @@ test("complete notebook flow: draw, undo/redo, persist and save the original sub
         bubbles: true,
       }),
     );
-    await delay(400);
+    await delay(1650);
   });
   assert.equal((await loadData())!.notebooks[0].pages[1].strokes.length, 0);
   await act(async () => {
@@ -369,6 +387,15 @@ test("four handwriting references replace the profile only after completion and 
     });
     canvas.dispatchEvent(stylus);
     assert.equal(stylus.defaultPrevented, true);
+    const stylusMove = new window.Event("touchmove", {
+      bubbles: true,
+      cancelable: true,
+    });
+    Object.defineProperty(stylusMove, "changedTouches", {
+      value: [{ identifier: 31, target: canvas, touchType: "stylus" }],
+    });
+    canvas.dispatchEvent(stylusMove);
+    assert.equal(stylusMove.defaultPrevented, true);
     await act(async () => {
       for (const [type, x, pointerType] of [
         ["pointerdown", 80, "touch"],
@@ -692,7 +719,7 @@ test("the library opens first and each notebook remembers its last page", async 
         send("pointerup", 5, 200 + dx);
         send("pointerup", 6, 250 + dx);
         if (withPalm) send("pointerup", 7, 480);
-        await delay(400);
+        await delay(withPalm ? 1650 : 400);
       });
     };
     await swipe(-90);
