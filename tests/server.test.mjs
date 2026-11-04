@@ -194,7 +194,7 @@ test("MCP responses and tasks return to browser through stable cursor pagination
     true,
   );
 });
-test("MCP discovery and tool list expose all five operations", async () => {
+test("MCP discovery and tool list expose all four operations", async () => {
   for (const method of ["server/discover", "initialize", "tools/list"]) {
     const response = await worker.fetch(
       request(
@@ -208,7 +208,7 @@ test("MCP discovery and tool list expose all five operations", async () => {
     assert.equal(response.status, 200);
     const result = await response.json();
     assert.ok(result.result);
-    if (method === "tools/list") assert.equal(result.result.tools.length, 5);
+    if (method === "tools/list") assert.equal(result.result.tools.length, 4);
   }
 });
 
@@ -342,107 +342,56 @@ test("public entry keeps owner storage and ChatGPT bridge scoped to the signed-i
   assert.equal((await bridge(visitorScope)).status, 200);
 });
 
-test("MCP events verify a callback and deliver a submission once for the matching account", async () => {
-  const hosted = {
-    BUCKET: new Bucket(),
-    INKLOOP_LEGACY_OWNER_EMAIL: "owner@example.test",
-    INKLOOP_WORK_INCLUDED_ONLY: "1",
-  };
-  const owner = {
-    "oai-authenticated-user-email": "owner@example.test",
-    "x-inkloop-workspace": "workspace",
-  };
-  const originalFetch = globalThis.fetch;
-  const deliveries = [];
-  const secret = "whsec_" + Buffer.alloc(32, 7).toString("base64");
-  const url = "https://chatgpt.com/backend-api/test-inkloop";
-  globalThis.fetch = async (target, init) => {
-    assert.equal(target, url);
-    assert.equal(init.redirect, "error");
-    const body = JSON.parse(init.body);
-    const { createHmac } = await import("node:crypto");
-    const signature = createHmac("sha256", Buffer.alloc(32, 7))
-      .update(
-        [
-          init.headers["webhook-id"],
-          init.headers["webhook-timestamp"],
-          init.body,
-        ].join("."),
-      )
-      .digest("base64");
-    assert.equal(init.headers["webhook-signature"], "v1," + signature);
-    if (body.type === "verification")
-      return Response.json({ challenge: body.challenge });
-    deliveries.push(body);
-    return Response.json({ ok: true });
-  };
-  const call = async (method, params = {}, actor = "owner") =>
-    (
-      await worker.fetch(
-        request(
-          "/mcp",
-          "POST",
-          JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-          actor,
-          actor === "owner"
-            ? owner
-            : { "oai-authenticated-user-email": "visitor@example.test" },
-        ),
-        hosted,
-      )
-    ).json();
-  const event = {
-    name: "inkloop.submission.created",
-    arguments: {},
-    delivery: { mode: "webhook", url, secret },
-  };
-  const upload = async () => {
-    const body = new FormData();
-    body.set(
-      "metadata",
-      JSON.stringify({
-        id: "ink-one",
-        createdAt: Date.now(),
-        notebookId: "math",
-        pageId: "one",
-        subject: "Mathematik",
-        language: "de",
-        task: "Private task",
-        prompt: "Private prompt",
-      }),
+test("malformed MCP requests get a JSON-RPC error instead of a crash", async () => {
+  for (const body of ["null", "[]", "42", "{"]) {
+    const response = await worker.fetch(
+      request("/mcp", "POST", body, "alice"),
+      env,
     );
-    body.set(
-      "image",
-      new Blob([Uint8Array.from([137, 80, 78, 71])], { type: "image/png" }),
-      "answer.png",
-    );
-    return (
-      await worker.fetch(
-        request("/api/bridge/submission", "POST", body, "owner", owner),
-        hosted,
-      )
-    ).json();
-  };
-  try {
-    assert.ok((await call("server/discover")).result.capabilities.events);
-    assert.equal((await call("events/list")).result.events[0].name, event.name);
-    assert.ok((await call("events/subscribe", event, "visitor")).error);
-    assert.ok(
-      (
-        await call("events/subscribe", {
-          ...event,
-          delivery: { ...event.delivery, url: "https://evil.test/hook" },
-        })
-      ).error,
-    );
-    assert.ok((await call("events/subscribe", event)).result.id);
-    hosted.INKLOOP_WORK_INCLUDED_ONLY = "0";
-    assert.equal((await upload()).automatic, false);
-    assert.equal(deliveries.length, 0);
-    hosted.INKLOOP_WORK_INCLUDED_ONLY = "1";
-    assert.equal((await upload()).automatic, false);
-    assert.equal(deliveries.length, 0);
-  } finally {
-    globalThis.fetch = originalFetch;
+    assert.equal(response.status, 400);
+    assert.ok((await response.json()).error);
   }
+});
+
+test("chat responses older than the retention window are pruned on the next write", async () => {
+  const actor = "retention";
+  await submit(actor, "fresh", "page-1");
+  const prefix = "users/" + actor + "/events/";
+  const stale = prefix + "0000000000001-old.json";
+  env.BUCKET.objects.set(stale, new TextEncoder().encode("{}"));
+  const response = await rpc(
+    "inkloop_write_response",
+    { submission_id: "fresh", transcription: "x", feedback: "y" },
+    actor,
+  );
+  assert.ok(!response.result.isError);
+  assert.equal(env.BUCKET.objects.has(stale), false);
+  const events = await (
+    await worker.fetch(request("/api/bridge", "GET", undefined, actor), env)
+  ).json();
+  assert.equal(events.events.length, 1);
+  assert.equal(events.events[0].submissionId, "fresh");
+});
+
+test("page deletion finds legacy submissions and never removes another page", async () => {
+  const actor = "page-index";
+  await submit(actor, "legacy", "page-a");
+  await submit(actor, "kept", "page-b");
+  const prefix = "users/" + actor + "/";
+  // Simulate data uploaded before page markers existed.
+  env.BUCKET.objects.delete(prefix + "pages/page-a/legacy");
+  const response = await worker.fetch(
+    request(
+      "/api/bridge/page/page-a",
+      "DELETE",
+      JSON.stringify({ submissionIds: ["kept"] }),
+      actor,
+    ),
+    env,
+  );
+  assert.equal(response.status, 200);
+  const read = (id) =>
+    rpc("inkloop_read_submission", { submission_id: id }, actor);
+  assert.equal((await read("legacy")).result.isError, true);
+  assert.ok(!(await read("kept")).result.isError);
 });

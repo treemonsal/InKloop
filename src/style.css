@@ -1484,12 +1484,15 @@ input[type="checkbox"] {
   }
 }
 @media (prefers-reduced-motion: reduce) {
+  /* Movement is replaced by short cross-fades in polish.css. */
   *,
   *:before,
   *:after {
-    animation: none !important;
-    transition: none !important;
     scroll-behavior: auto !important;
+  }
+  .learning-panel,
+  .liquid-ui {
+    transition-property: opacity !important;
   }
   button:not(:disabled):active,
   a:active {

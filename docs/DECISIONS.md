@@ -6,7 +6,7 @@ Eine Person, zuerst iPad. Deutsch und Englisch je Lernheft umschaltbar. Startfä
 
 ## Handschrift bleibt die Quelle
 
-Erkennung wird ausschließlich bewusst mit einer Abgabe angestoßen. Inkloop erzeugt das Bild, der bestehende Original-Chat erkennt die Handschrift. Eine Transkription darf fachliche Fehler nicht still korrigieren. Jede Abgabe speichert einen separaten Stand; späteres Radieren verändert keine ältere Abgabe.
+Erkennung wird ausschliesslich bewusst mit einer Abgabe angestossen. Inkloop erzeugt das Bild, der bestehende Original-Chat erkennt die Handschrift. Eine Transkription darf fachliche Fehler nicht still korrigieren. Jede Abgabe speichert einen separaten Stand; späteres Radieren verändert keine ältere Abgabe.
 
 ## Referenzprofil
 
