@@ -8,7 +8,7 @@ function open() {
     r.onsuccess = () => resolve(r.result);
     r.onerror = () => reject(r.error);
     r.onblocked = () =>
-      reject(new Error("Bitte andere Inkloop-Fenster schließen."));
+      reject(new Error("Bitte andere Inkloop-Fenster schliessen."));
   }));
 }
 export async function readStoredData(

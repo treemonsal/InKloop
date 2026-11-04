@@ -7,8 +7,6 @@ const types = {
   ".svg": "image/svg+xml",
   ".webmanifest": "application/manifest+json",
   ".woff2": "font/woff2",
-  ".woff": "font/woff",
-  ".ttf": "font/ttf",
 };
 const assets = {};
 for (const file of await readdir("dist", { recursive: true })) {

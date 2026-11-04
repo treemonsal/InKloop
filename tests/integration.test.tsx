@@ -520,6 +520,11 @@ test("plugin responses arrive automatically and new tasks preserve an existing h
       "x = 3",
     );
     assert.equal(saved.bridgeCursor, "cursor-one");
+    assert.ok(
+      document.body.textContent?.includes(
+        "Neues Feedback aus dem Chat ist da.",
+      ),
+    );
     await click("Mathematik");
     assert.ok(!document.body.textContent?.includes("Berücksichtige auch −3."));
     await act(async () => {
@@ -536,6 +541,9 @@ test("plugin responses arrive automatically and new tasks preserve an existing h
     assert.equal(saved.notebooks[0].pages[0].strokes.length, 1);
     assert.equal(saved.notebooks[0].language, "en");
     assert.equal(saved.bridgeCursor, "cursor-two");
+    assert.ok(
+      document.body.textContent?.includes("Neue Aufgabe aus dem Chat ist da."),
+    );
   } finally {
     await act(async () => {
       app.unmount();

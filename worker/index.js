@@ -3,17 +3,6 @@ const ASSETS = /* INKLOOP_ASSETS */ {};
 const VERSION = "2026-07-28";
 const tools = [
   {
-    name: "inkloop_next_review",
-    description:
-      "Find one pending automatic Inkloop review. Returns only its submission ID, or null. Use inkloop_read_submission and inkloop_write_response with that ID.",
-    inputSchema: {
-      type: "object",
-      properties: {},
-      additionalProperties: false,
-    },
-    annotations: { readOnlyHint: true },
-  },
-  {
     name: "inkloop_get_workspace",
     description:
       "Read Inkloop notebook/page identifiers and the latest submitted answer for the signed-in user. Use before setting a task or reading a submission. No model or API purchase is involved.",
@@ -142,9 +131,6 @@ async function deletePageCopies(bucket, prefix, pageId, submissionIds) {
   }
   for (const id of ids) {
     await put(bucket, deletedKey(prefix, id), true);
-    if ((await read(bucket, reviewKey(id)))?.prefix === prefix)
-      await bucket.delete(reviewKey(id));
-    await bucket.delete(reviewResultKey(prefix, id));
     const key = submissionKey(prefix, id);
     await bucket.delete(key + ".json");
     await bucket.delete(key + ".png");
@@ -221,7 +207,18 @@ async function event(bucket, prefix, payload) {
     id = crypto.randomUUID();
   const result = { ...payload, id, createdAt };
   await put(bucket, eventKey(prefix, result), result);
+  await pruneEvents(bucket, prefix, createdAt);
   return result;
+}
+// Events are only a delivery queue; the notebook keeps the result locally.
+const EVENT_RETENTION_MS = 90 * 86400000;
+async function pruneEvents(bucket, prefix, now) {
+  const start = prefix + "events/";
+  const cutoff =
+    start + String(Math.max(0, now - EVENT_RETENTION_MS)).padStart(13, "0");
+  const list = await bucket.list({ prefix: start, limit: 100 });
+  for (const { key } of list.objects)
+    if (key < cutoff) await bucket.delete(key);
 }
 async function pendingEvents(bucket, prefix, after) {
   const start = prefix + "events/";
@@ -240,347 +237,7 @@ async function pendingEvents(bucket, prefix, after) {
       : after,
   };
 }
-const submissionEvent = {
-  name: "inkloop.submission.created",
-  description:
-    "A handwritten Inkloop answer was submitted. Use inkloop_read_submission with the supplied submission_id, then save the transcription and feedback to that exact submission with inkloop_write_response.",
-  delivery: ["webhook"],
-  inputSchema: { type: "object", properties: {}, additionalProperties: false },
-  payloadSchema: {
-    type: "object",
-    properties: { submission_id: { type: "string" } },
-    required: ["submission_id"],
-    additionalProperties: false,
-  },
-};
-const capabilities = { tools: {}, events: {} };
-const subscriptionKey = (prefix) => prefix + "work/subscription.json";
-
-function workCallback(value) {
-  if (typeof value !== "string" || value.length > 2048) return null;
-  try {
-    const url = new URL(value);
-    const firstParty =
-      url.hostname === "chatgpt.com" ||
-      url.hostname.endsWith(".chatgpt.com") ||
-      url.hostname === "api.openai.com";
-    if (
-      firstParty &&
-      url.protocol === "https:" &&
-      !url.port &&
-      !url.username &&
-      !url.password &&
-      !url.hash
-    )
-      return url.href;
-  } catch {}
-  return null;
-}
-
-function webhookKey(secret) {
-  if (
-    typeof secret !== "string" ||
-    !/^whsec_[A-Za-z0-9+/]{32,88}={0,2}$/.test(secret)
-  )
-    return null;
-  try {
-    const bytes = Uint8Array.from(atob(secret.slice(6)), (char) =>
-      char.charCodeAt(0),
-    );
-    return bytes.length >= 24 && bytes.length <= 64 ? bytes : null;
-  } catch {
-    return null;
-  }
-}
-
-async function postWorkEvent(subscription, id, payload) {
-  const url = workCallback(subscription.url);
-  const secret = webhookKey(subscription.secret);
-  if (!url || !secret) throw new Error("Invalid callback");
-  const encoder = new TextEncoder();
-  const body = JSON.stringify(payload);
-  const timestamp = String(Math.floor(Date.now() / 1000));
-  const key = await crypto.subtle.importKey(
-    "raw",
-    secret,
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const signature = await crypto.subtle.sign(
-    "HMAC",
-    key,
-    encoder.encode(id + "." + timestamp + "." + body),
-  );
-  return fetch(url, {
-    method: "POST",
-    redirect: "error",
-    signal: AbortSignal.timeout(4500),
-    headers: {
-      "content-type": "application/json",
-      "webhook-id": id,
-      "webhook-timestamp": timestamp,
-      "webhook-signature":
-        "v1," + btoa(String.fromCharCode(...new Uint8Array(signature))),
-      "X-MCP-Subscription-Id": subscription.id,
-    },
-    body,
-  });
-}
-
-async function workEventRpc(request, env, message, reply) {
-  const error = (code, messageText, data) =>
-    json({
-      jsonrpc: "2.0",
-      id: message.id ?? null,
-      error: { code, message: messageText, data },
-    });
-  let owner;
-  try {
-    owner = (await workspaceScope(request, env)) === "workspace";
-  } catch {}
-  if (!owner)
-    return error(-32001, "Inkloop account is not authorized for Work events.");
-  if (message.method === "events/list")
-    return reply({ events: [submissionEvent] });
-  if (!["events/subscribe", "events/unsubscribe"].includes(message.method))
-    return error(-32601, "Unknown event method");
-
-  const { name, arguments: args = {}, delivery, ttlMs } = message.params || {};
-  const url = workCallback(delivery?.url);
-  if (
-    name !== submissionEvent.name ||
-    !args ||
-    Array.isArray(args) ||
-    typeof args !== "object" ||
-    Object.keys(args).length ||
-    delivery?.mode !== "webhook" ||
-    !url
-  )
-    return error(-32602, "Unsupported Inkloop event or callback.");
-  const bucket = assertBucket(env);
-  const prefix = prefixFor(request);
-  const key = subscriptionKey(prefix);
-  const saved = await read(bucket, key);
-  if (message.method === "events/unsubscribe") {
-    if (saved?.url === url) await bucket.delete(key);
-    return reply({});
-  }
-  if (
-    !webhookKey(delivery.secret) ||
-    (ttlMs != null && (!Number.isSafeInteger(ttlMs) || ttlMs <= 0))
-  )
-    return error(-32602, "Invalid webhook secret or expiry.");
-  if (saved && saved.expires > Date.now() && saved.url !== url)
-    return error(
-      -32602,
-      "Stop the existing Inkloop Work task before connecting another.",
-    );
-
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(prefix + url),
-  );
-  const id =
-    "sub_" +
-    Array.from(new Uint8Array(digest), (b) =>
-      b.toString(16).padStart(2, "0"),
-    ).join("");
-  const expires = Date.now() + Math.min(ttlMs ?? 7 * 86400000, 7 * 86400000);
-  const subscription = { id, url, secret: delivery.secret, expires };
-  if (
-    saved?.url !== url ||
-    saved.secret !== subscription.secret ||
-    saved.expires <= Date.now()
-  ) {
-    const challenge = crypto.randomUUID();
-    try {
-      const res = await postWorkEvent(
-        subscription,
-        "verify_" + crypto.randomUUID(),
-        {
-          type: "verification",
-          challenge,
-        },
-      );
-      const result =
-        res.ok &&
-        JSON.parse(new TextDecoder().decode(await limitedBody(res, 4096)));
-      if (
-        typeof result?.challenge !== "string" ||
-        result.challenge.length !== challenge.length
-      )
-        throw new Error("Invalid challenge");
-      let diff = 0;
-      for (let i = 0; i < challenge.length; i++)
-        diff |= challenge.charCodeAt(i) ^ result.challenge.charCodeAt(i);
-      if (diff !== 0) throw new Error("Invalid challenge");
-    } catch {
-      return error(-32015, "Callback verification failed.", {
-        reason: "challenge_failed",
-      });
-    }
-  }
-  await put(bucket, key, subscription);
-  return reply({
-    id,
-    refreshBefore: new Date(expires).toISOString(),
-    cursor: null,
-    truncated: false,
-  });
-}
-
-async function signalWork(request, env, bucket, prefix, metadata) {
-  if (
-    env.INKLOOP_WORK_INCLUDED_ONLY !== "1" ||
-    !env.INKLOOP_LEGACY_OWNER_EMAIL ||
-    (await workspaceScope(request, env)) !== "workspace"
-  )
-    return false;
-  const subscription = await read(bucket, subscriptionKey(prefix));
-  if (!subscription || subscription.expires <= Date.now()) return false;
-  const eventId = "inkloop_" + metadata.id;
-  const deliveryKey = prefix + "work/deliveries/" + metadata.id;
-  const claimed = await bucket.put(
-    deliveryKey,
-    JSON.stringify({ state: "sending" }),
-    { onlyIf: firstWrite },
-  );
-  if (!claimed) {
-    const previous = await read(bucket, deliveryKey);
-    return previous?.state === "accepted" || previous?.state === "sending";
-  }
-  const payload = {
-    eventId,
-    name: submissionEvent.name,
-    timestamp: new Date().toISOString(),
-    data: { submission_id: metadata.id },
-    cursor: null,
-  };
-  let state = "failed";
-  try {
-    const response = await postWorkEvent(subscription, eventId, payload);
-    if (response.ok) state = "accepted";
-    if (response.status === 410) await bucket.delete(subscriptionKey(prefix));
-  } catch {
-    // Delivery may already have started. A repeated upload must not start another run.
-  }
-  await put(bucket, deliveryKey, { state });
-  return state === "accepted";
-}
-
-const reviewQueue = "review/queue/";
-const reviewKey = (id) => reviewQueue + id + ".json";
-const reviewResultKey = (prefix, id) =>
-  prefix + "review/results/" + id + ".json";
-
-async function enqueueReview(request, env, bucket, prefix, metadata) {
-  if (
-    (!env.INKLOOP_REVIEW_KEY && env.INKLOOP_CLOUD_REVIEW !== "1") ||
-    !env.INKLOOP_LEGACY_OWNER_EMAIL
-  )
-    return false;
-  if ((await workspaceScope(request, env)) !== "workspace") return false;
-  const { id } = metadata;
-  if (!(await bucket.get(reviewResultKey(prefix, id))))
-    await bucket.put(reviewKey(id), JSON.stringify({ id, prefix }), {
-      onlyIf: firstWrite,
-    });
-  return true;
-}
-
-async function reviewRelay(request, env) {
-  const supplied = request.headers.get("x-inkloop-review-key") || "";
-  const expected = env.INKLOOP_REVIEW_KEY;
-  if (!expected || supplied.length !== expected.length)
-    return json({ error: "AUTH_REQUIRED" }, 401);
-  let difference = 0;
-  for (let i = 0; i < expected.length; i++)
-    difference |= supplied.charCodeAt(i) ^ expected.charCodeAt(i);
-  if (difference) return json({ error: "AUTH_REQUIRED" }, 401);
-  const bucket = assertBucket(env);
-  if (request.method === "GET") {
-    for await (const { key, value: job } of records(bucket, reviewQueue)) {
-      const submission = submissionKey(job.prefix, job.id);
-      const metadata = await read(bucket, submission + ".json");
-      const image = await bucket.get(submission + ".png");
-      if (
-        !metadata ||
-        !image ||
-        (await bucket.get(deletedKey(job.prefix, job.id)))
-      ) {
-        await bucket.delete(key);
-        continue;
-      }
-      const task = JSON.stringify({
-        id: job.id,
-        task: metadata.task,
-        subject: metadata.subject,
-        language: metadata.language,
-      });
-      const form = new FormData();
-      form.set("task", task);
-      form.set(
-        "image",
-        new Blob([await image.arrayBuffer()], { type: "image/png" }),
-        "answer.png",
-      );
-      return new Response(form, { headers: { "cache-control": "no-store" } });
-    }
-    return new Response(null, {
-      status: 204,
-      headers: { "cache-control": "no-store" },
-    });
-  }
-  if (request.method !== "POST") return json({ error: "METHOD" }, 405);
-  const args = JSON.parse(
-    new TextDecoder().decode(await limitedBody(request, 80_000)),
-  );
-  return saveQueuedReview(bucket, args);
-}
-
-async function saveQueuedReview(bucket, args) {
-  const id = args.submission_id;
-  if (
-    !validId(id) ||
-    !text(args.transcription, 20_000) ||
-    !text(args.feedback, 20_000)
-  )
-    return json({ error: "INVALID_REVIEW" }, 400);
-  const job = await read(bucket, reviewKey(id));
-  if (!job) return json({ saved: false });
-  const metadata = await read(bucket, submissionKey(job.prefix, id) + ".json");
-  const tombstone = deletedKey(job.prefix, id);
-  if (!metadata || (await bucket.get(tombstone))) {
-    await bucket.delete(reviewKey(id));
-    return json({ error: "DELETED" }, 410);
-  }
-  const result = {
-    type: "response",
-    submissionId: id,
-    notebookId: metadata.notebookId,
-    pageId: metadata.pageId,
-    transcription: args.transcription,
-    feedback: args.feedback,
-    nextTask: "",
-    id: crypto.randomUUID(),
-    createdAt: Date.now(),
-  };
-  const receipt = reviewResultKey(job.prefix, id);
-  const created = await bucket.put(receipt, JSON.stringify(result), {
-    onlyIf: firstWrite,
-  });
-  const saved = created ? result : await read(bucket, receipt);
-  const key = eventKey(job.prefix, saved);
-  await bucket.put(key, JSON.stringify(saved), { onlyIf: firstWrite });
-  if (await bucket.get(tombstone)) {
-    await bucket.delete(key);
-    await bucket.delete(receipt);
-    return json({ error: "DELETED" }, 410);
-  }
-  await bucket.delete(reviewKey(id));
-  return json({ saved: true });
-}
+const capabilities = { tools: {} };
 
 async function rpc(request, env) {
   let message;
@@ -598,6 +255,15 @@ async function rpc(request, env) {
       400,
     );
   }
+  if (!message || typeof message !== "object" || Array.isArray(message))
+    return json(
+      {
+        jsonrpc: "2.0",
+        id: null,
+        error: { code: -32600, message: "Invalid request" },
+      },
+      400,
+    );
   const reply = (result) =>
     json({ jsonrpc: "2.0", id: message.id ?? null, result });
   if (message.method === "server/discover")
@@ -618,8 +284,6 @@ async function rpc(request, env) {
     return new Response(null, { status: 202 });
   if (message.method === "ping") return reply({});
   if (message.method === "tools/list") return reply({ tools });
-  if (message.method?.startsWith("events/"))
-    return workEventRpc(request, env, message, reply);
   if (message.method !== "tools/call")
     return json({
       jsonrpc: "2.0",
@@ -631,28 +295,6 @@ async function rpc(request, env) {
       prefix = prefixFor(request),
       args = message.params?.arguments || {},
       name = message.params?.name;
-    if (name === "inkloop_next_review") {
-      let id = null;
-      if (
-        env.INKLOOP_CLOUD_REVIEW === "1" &&
-        (await workspaceScope(request, env)) === "workspace"
-      ) {
-        for await (const { value: job } of records(bucket, reviewQueue)) {
-          if (
-            job.prefix === prefix &&
-            !(await bucket.get(deletedKey(prefix, job.id)))
-          ) {
-            id = job.id;
-            break;
-          }
-        }
-      }
-      return reply({
-        content: [
-          { type: "text", text: JSON.stringify({ submission_id: id }) },
-        ],
-      });
-    }
     if (name === "inkloop_get_workspace") {
       const workspace = await read(bucket, prefix + "workspace.json");
       const latest = await latestSubmission(bucket, prefix);
@@ -707,15 +349,6 @@ async function rpc(request, env) {
         throw new Error(
           "Abgabe nicht gefunden. Lies zuerst die richtige Abgabe.",
         );
-      const job = await read(bucket, reviewKey(args.submission_id));
-      if (job?.prefix === prefix && env.INKLOOP_CLOUD_REVIEW === "1") {
-        const result = await saveQueuedReview(bucket, args);
-        return reply({
-          content: [
-            { type: "text", text: JSON.stringify(await result.json()) },
-          ],
-        });
-      }
       const result = await event(bucket, prefix, {
         type: "response",
         submissionId: args.submission_id,
@@ -922,30 +555,35 @@ async function api(request, env) {
   }
   return json({ error: "Not found" }, 404);
 }
+const decoded = new Map();
+// Conservative policy that cannot block scripts the hosting platform may inject.
+const CSP = "object-src 'none'; base-uri 'self'; form-action 'self'";
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     try {
       if (url.pathname === "/mcp") {
-        if (request.method === "POST") return rpc(request, env);
+        if (request.method === "POST") return await rpc(request, env);
         return new Response("Inkloop MCP", {
           status: 405,
           headers: { Allow: "POST" },
         });
       }
-      if (url.pathname === "/api/review/relay")
-        return await reviewRelay(request, env);
       if (url.pathname.startsWith("/api/")) return await api(request, env);
       if (!["GET", "HEAD"].includes(request.method))
         return new Response("Method not allowed", { status: 405 });
       const path = url.pathname === "/" ? "index.html" : url.pathname.slice(1),
         asset = ASSETS[path];
       if (!asset) return new Response("Not found", { status: 404 });
-      const binary = atob(asset.data),
-        bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
+      let bytes = decoded.get(path);
+      if (!bytes) {
+        bytes = Uint8Array.from(atob(asset.data), (c) => c.charCodeAt(0));
+        decoded.set(path, bytes);
+      }
       return new Response(request.method === "HEAD" ? null : bytes, {
         headers: {
           "content-type": asset.type,
+          ...(path === "index.html" ? { "content-security-policy": CSP } : {}),
           "cache-control": path.startsWith("assets/")
             ? "public, max-age=31536000, immutable"
             : "no-cache",

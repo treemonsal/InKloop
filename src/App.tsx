@@ -394,6 +394,41 @@ export default function App() {
   const applyBridgeEvents = useCallback(
     (events: BridgeEvent[], cursor: string) => {
       if (!events.length) return;
+      const known = current.current;
+      if (known && known.bridgeCursor !== cursor) {
+        const responses = events.filter(
+          (e) =>
+            e.type === "response" &&
+            known.notebooks.some((n) =>
+              n.pages.some(
+                (p) =>
+                  p.id === e.pageId &&
+                  p.submissions.some((s) => s.id === e.submissionId),
+              ),
+            ),
+        ).length;
+        const tasks = events.filter(
+          (e) =>
+            e.type === "task" &&
+            e.task &&
+            known.notebooks.some(
+              (n) =>
+                n.id === e.notebookId && !n.pages.some((p) => p.id === e.id),
+            ),
+        ).length;
+        if (responses)
+          notify(
+            responses === 1
+              ? "Neues Feedback aus dem Chat ist da."
+              : `${responses} neue Feedbacks aus dem Chat sind da.`,
+          );
+        else if (tasks)
+          notify(
+            tasks === 1
+              ? "Neue Aufgabe aus dem Chat ist da."
+              : `${tasks} neue Aufgaben aus dem Chat sind da.`,
+          );
+      }
       setData((old) => {
         if (!old || old.bridgeCursor === cursor) return old;
         let next = old;
@@ -1978,7 +2013,7 @@ export default function App() {
                           : "Safari verwaltet den Speicher. Bitte weiterhin Sicherungen erstellen.",
                       );
                     } catch {
-                      notify("Bitte regelmäßig Sicherungen erstellen.");
+                      notify("Bitte regelmässig Sicherungen erstellen.");
                     }
                   }}
                 >
@@ -2028,7 +2063,7 @@ export default function App() {
               </IconButton>
               <span>{Math.round(zoom * 100)} %</span>
               <IconButton
-                label="Vergrößern"
+                label="Vergrössern"
                 disabled={zoom >= 2}
                 onClick={() => setZoom((z) => Math.min(2, z + 0.25))}
               >
@@ -2098,7 +2133,7 @@ export default function App() {
             <Download size={18} />
             <span>
               Handschrift als Bild speichern
-              <small>Gut lesbares PNG auf weißem Papier.</small>
+              <small>Gut lesbares PNG auf weissem Papier.</small>
             </span>
           </button>
           <button
@@ -2113,7 +2148,7 @@ export default function App() {
             <Eraser size={18} />
             <span>
               Handschrift leeren
-              <small>Kannst du anschließend rückgängig machen.</small>
+              <small>Kannst du anschliessend rückgängig machen.</small>
             </span>
           </button>
           <details className="danger-details">
@@ -2195,7 +2230,7 @@ export default function App() {
               Deine vier beschrifteten Proben werden auf Wunsch unter dem
               Antwortbild ergänzt. Die KI kann sie zum Vergleichen nutzen. Das
               ist kein Modelltraining, keine Garantie für perfekte Erkennung und
-              kann die Bildgröße erhöhen.
+              kann die Bildgrösse erhöhen.
             </p>
           </details>
           <details className="help-detail">
@@ -2210,11 +2245,11 @@ export default function App() {
           <details className="help-detail">
             <summary>Schreiben und Speichern</summary>
             <p>
-              Standardmäßig schreibt nur Pencil oder Maus. Finger scrollen. Für
+              Standardmässig schreibt nur Pencil oder Maus. Finger scrollen. Für
               Fingereingabe aktiviere die Option in den Einstellungen. Der
-              Radierer entfernt ganze Striche. Vergrößern hilft bei kleinen
+              Radierer entfernt ganze Striche. Vergrössern hilft bei kleinen
               Zeichen. Inkloop speichert nach jedem abgeschlossenen Strich.
-              Sichere deine Lernhefte regelmäßig als JSON-Datei.
+              Sichere deine Lernhefte regelmässig als JSON-Datei.
             </p>
           </details>
         </Modal>
