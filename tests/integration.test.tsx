@@ -641,7 +641,7 @@ test("an offline submission can be sent later without creating a duplicate", asy
     await click("Schliessen");
     online = true;
     await click("Lernbereich");
-    await click("Erneut an ChatGPT senden");
+    await click("An ChatGPT senden");
     await act(async () => {
       await delay(400);
     });
@@ -887,4 +887,72 @@ test("storage migrates the old single record and stays consistent with two write
     (await loadData("legacy-ws"))!.notebooks[0].pages[1].title,
     "Neu",
   );
+});
+
+test("a failed upload is shown as failed, not as local or sent, and can be retried", async () => {
+  const d = initialData();
+  d.onboardingDone = true;
+  const book = d.notebooks[0];
+  book.pages[0].strokes = [
+    {
+      id: "ink-failed",
+      tool: "pen",
+      color: "#eee9df",
+      width: 2.5,
+      points: [{ x: 10, y: 10, p: 0.5 }],
+    },
+  ];
+  await saveData(d);
+  const originalFetch = globalThis.fetch;
+  const originalFormData = globalThis.FormData;
+  globalThis.FormData = window.FormData as unknown as typeof FormData;
+  let uploadWorks = false;
+  globalThis.fetch = (async (input) => {
+    const path = String(input);
+    if (path.endsWith("/submission") && !uploadWorks)
+      throw new Error("network");
+    return Response.json({ ok: true, events: [], cursor: "" });
+  }) as typeof fetch;
+  const host = document.body.appendChild(document.createElement("div"));
+  const app = createRoot(host);
+  try {
+    await act(async () => {
+      app.render(<App />);
+    });
+    await act(async () => {
+      await delay(120);
+    });
+    await click("Mathematik");
+    await click("Antwort abgeben");
+    await act(async () => {
+      await delay(400);
+    });
+    const failed = (await loadData())!.notebooks[0].pages[0].submissions[0];
+    assert.equal(failed.handoff?.failed, true);
+    assert.equal(failed.handoff?.sent, false);
+    assert.ok(
+      document.body.textContent?.includes("Übertragung fehlgeschlagen"),
+    );
+    await click("Schliessen");
+    await click("Lernbereich");
+    assert.ok(
+      document.body.textContent?.includes("Übertragung fehlgeschlagen"),
+    );
+    uploadWorks = true;
+    await click("Erneut senden");
+    await act(async () => {
+      await delay(400);
+    });
+    const sent = (await loadData())!.notebooks[0].pages[0].submissions[0];
+    assert.equal(sent.handoff?.sent, true);
+    assert.equal(sent.handoff?.failed, undefined);
+    assert.ok(document.body.textContent?.includes("Abgegeben"));
+  } finally {
+    await act(async () => {
+      app.unmount();
+    });
+    host.remove();
+    globalThis.fetch = originalFetch;
+    globalThis.FormData = originalFormData;
+  }
 });

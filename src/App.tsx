@@ -4,25 +4,17 @@ import {
   useLayoutEffect,
   useRef,
   useState,
-  type CSSProperties,
 } from "react";
 import {
   ArrowUpRight,
-  CheckCheck,
   ChevronLeft,
   CircleAlert,
-  Eraser,
-  FileText,
-  Highlighter,
+  CloudOff,
   LoaderCircle,
-  Minus,
   MoreHorizontal,
   PanelLeft,
-  PenLine,
+  PanelRight,
   Plus,
-  Redo2,
-  Undo2,
-  X,
 } from "lucide-react";
 import {
   publishSubmission,
@@ -30,7 +22,6 @@ import {
   hostedWorkspace,
   type BridgeEvent,
 } from "./bridge";
-import { useLiquidChrome } from "./useLiquidChrome";
 import InkCanvas, { type Tool } from "./Canvas";
 import {
   type Notebook,
@@ -42,16 +33,20 @@ import {
   uid,
   buildPrompt,
   parseBackup,
+  submissionState,
   type AppData,
 } from "./model";
 import { readStoredData, download } from "./storage";
-import { submissionImage, displayInkColor } from "./ink";
+import { submissionImage } from "./ink";
 import {
   IconButton,
   Logo,
   Miniature,
   Toast,
   dismissModal,
+  reviveModal,
+  useDrawerDrag,
+  useOnline,
   type ToastMessage,
 } from "./ui";
 import { usePersistence } from "./usePersistence";
@@ -65,6 +60,7 @@ import {
 } from "./updates";
 import { Library } from "./Library";
 import { LearningPanel, type PanelTab } from "./LearningPanel";
+import { InkTools } from "./InkTools";
 import {
   DeleteNotebookSheet,
   HelpSheet,
@@ -111,6 +107,7 @@ function useDelayed(active: boolean, ms: number) {
 export default function App() {
   const store = usePersistence();
   const { data, setData, current, externalEdit, saving } = store;
+  const online = useOnline();
   const [accountChanged, setAccountChanged] = useState(false);
   const [sheet, setSheet] = useState<Sheet>(null),
     [inLibrary, setInLibrary] = useState(true),
@@ -139,10 +136,9 @@ export default function App() {
     ),
     importFile = useRef<HTMLInputElement>(null),
     restoreCandidate = useRef<AppData | null>(null),
-    glassToolbar = useRef<HTMLDivElement>(null),
-    glassActions = useRef<HTMLDivElement>(null),
     panelToggle = useRef<HTMLButtonElement>(null),
     learningPanel = useRef<HTMLElement>(null),
+    pagesDrawer = useRef<HTMLElement>(null),
     sheetToken = useRef(0);
 
   const theme = data?.settings.theme ?? "dark";
@@ -159,11 +155,6 @@ export default function App() {
         .querySelector('meta[name="theme-color"]')
         ?.setAttribute("content", background);
   }, [theme]);
-  useLiquidChrome(
-    glassToolbar,
-    glassActions,
-    Boolean(data) && !inLibrary && !store.loadError,
-  );
 
   const notify = useCallback(
     (
@@ -175,7 +166,7 @@ export default function App() {
       clearTimeout(toastTimer.current);
       toastTimer.current = setTimeout(
         () => setToast(null),
-        action ? 7000 : kind === "error" ? 6000 : 4000,
+        action ? 7000 : kind === "error" ? 6000 : 3500,
       );
     },
     [],
@@ -186,12 +177,10 @@ export default function App() {
     setPanelOpen(false);
     panelToggle.current?.focus();
   };
-  useEffect(() => {
-    if (compact && panelOpen && !inLibrary)
-      learningPanel.current
-        ?.querySelector<HTMLElement>('[aria-selected="true"]')
-        ?.focus();
-  }, [compact, panelOpen, inLibrary]);
+  useDrawerDrag(pagesDrawer, "left", sidebar, () => setSidebar(false));
+  useDrawerDrag(learningPanel, "right", compact && panelOpen, () =>
+    setPanelOpen(false),
+  );
   useEffect(() => {
     const query = window.matchMedia(compactLayout);
     const update = () => {
@@ -329,6 +318,7 @@ export default function App() {
 
   const open = (s: Sheet) => {
     sheetToken.current++;
+    reviveModal();
     setError("");
     setSheet(s);
   };
@@ -399,8 +389,11 @@ export default function App() {
     (n) => n.id === notebookToDelete,
   );
   const deleteNotebook = () => {
-    if (!notebookForDeletion || externalEdit) return;
+    if (!notebookForDeletion || externalEdit || !data) return;
     const doomed = notebookForDeletion;
+    const index = data.notebooks.findIndex((n) => n.id === doomed.id);
+    const wasActive = data.activeNotebook === doomed.id;
+    const activePage = data.activePage;
     update((d) => {
       const notebooks = d.notebooks.filter((n) => n.id !== doomed.id);
       if (d.activeNotebook !== doomed.id) return { ...d, notebooks };
@@ -415,28 +408,50 @@ export default function App() {
           "",
       };
     });
-    for (const p of doomed.pages) history.current.delete(p.id);
     setNotebookToDelete(null);
     close();
-    notify("Lernheft auf diesem Gerät gelöscht.");
+    notify(`«${doomed.name}» gelöscht.`, "success", {
+      label: "Rückgängig",
+      run: () =>
+        update((d) =>
+          d.notebooks.some((n) => n.id === doomed.id)
+            ? d
+            : {
+                ...d,
+                notebooks: [
+                  ...d.notebooks.slice(0, index),
+                  doomed,
+                  ...d.notebooks.slice(index),
+                ],
+                ...(wasActive || !d.activeNotebook
+                  ? { activeNotebook: doomed.id, activePage }
+                  : {}),
+              },
+        ),
+    });
   };
   const copyText = async (text: string) => {
     try {
       await navigator.clipboard.writeText(text);
-      notify("In die Zwischenablage kopiert.");
+      notify("Kopiert.");
       return true;
     } catch {
-      notify("Kopieren nicht verfügbar.", "error");
+      notify("Kopieren geht hier nicht. Text markieren.", "error");
       return false;
     }
   };
-  const markSent = (n: Notebook, pageId: string, s: Submission) =>
+  const markHandoff = (
+    n: Notebook,
+    pageId: string,
+    s: Submission,
+    patch: Partial<NonNullable<Submission["handoff"]>>,
+  ) =>
     update((d) =>
       mapPage(d, n.id, pageId, (p) => ({
         ...p,
         submissions: p.submissions.map((x) =>
           x.id === s.id && x.handoff
-            ? { ...x, handoff: { ...x.handoff, sent: true } }
+            ? { ...x, handoff: { ...x.handoff, ...patch } }
             : x,
         ),
       })),
@@ -460,20 +475,23 @@ export default function App() {
       const blob = await submissionImage(source, s, handoff.samples);
       const prompt = buildPrompt(source, s, handoff.samples.length);
       let shared = handoff.sent;
+      let failed = false;
       if (send) {
         try {
           await publishSubmission(source, pageId, s, blob, prompt);
           shared = true;
-          markSent(n, pageId, s);
+          markHandoff(n, pageId, s, { sent: true, failed: undefined });
         } catch {
-          notify(
-            "Senden fehlgeschlagen. Du kannst es bei dieser Abgabe erneut versuchen.",
-            "error",
-          );
+          failed = true;
+          markHandoff(n, pageId, s, { failed: true });
         }
       }
       if (send && shared) {
-        notify("Abgabe gespeichert.");
+        const plugin = `Lies meine Inkloop-Abgabe ${s.id} mit dem Inkloop-Plugin. Transkribiere die Handschrift originalgetreu, gib anschliessend Lernfeedback und speichere beides mit inkloop_write_response zurück. Nutze den Kontext unseres Chats.`;
+        notify("Abgegeben.", "success", {
+          label: "Auftrag kopieren",
+          run: () => void copyText(plugin),
+        });
         return;
       }
       if (current.current?.activePage === pageId) {
@@ -483,16 +501,16 @@ export default function App() {
           prompt,
           submission: s,
           shared,
+          failed,
         });
         setSelectedSubmission(s.id);
         sheetToken.current++;
+        reviveModal();
         setSheet("submit");
-      }
+      } else if (failed) notify("Übertragung fehlgeschlagen.", "error");
     } catch (e) {
       notify(
-        e instanceof Error
-          ? e.message
-          : "Das Abgabebild konnte nicht erstellt werden.",
+        e instanceof Error ? e.message : "Bild konnte nicht erstellt werden.",
         "error",
       );
     } finally {
@@ -519,6 +537,7 @@ export default function App() {
       handoff,
     };
     patchPage({ submissions: [...page.submissions, s] });
+    setSelectedSubmission(s.id);
     void showHandoff(notebook, page.id, s, handoff, !!plugin);
   };
   const applyResponse = (result: {
@@ -545,12 +564,15 @@ export default function App() {
     setTab(result.feedback ? "feedback" : "text");
     setPanelOpen(true);
     close();
-    notify("Antwort im Lernheft gespeichert.");
+    notify("Antwort übernommen.");
   };
   const deletePage = async (includeServer: boolean) => {
     if (!notebook || !page || busy || externalEdit) return;
     setBusy(true);
     setError("");
+    const doomed = page,
+      home = notebook.id,
+      index = notebook.pages.findIndex((p) => p.id === page.id);
     try {
       if (includeServer)
         await deleteSharedPage(
@@ -558,33 +580,54 @@ export default function App() {
           page.submissions.map((s) => s.id),
         );
       update((d) => {
-        const target = d.notebooks.find((n) => n.id === notebook.id);
-        const index = target?.pages.findIndex((p) => p.id === page.id) ?? -1;
+        const target = d.notebooks.find((n) => n.id === home);
         if (!target || index < 0) return d;
-        const pages = target.pages.filter((p) => p.id !== page.id);
+        const pages = target.pages.filter((p) => p.id !== doomed.id);
         if (!pages.length) pages.push(newPage("Seite 1"));
         const replacement = pages[Math.max(0, index - 1)].id;
         return {
           ...mapNotebook(d, target.id, (n) => ({
             ...n,
             pages,
-            lastPageId: n.lastPageId === page.id ? replacement : n.lastPageId,
+            lastPageId: n.lastPageId === doomed.id ? replacement : n.lastPageId,
           })),
-          activePage: d.activePage === page.id ? replacement : d.activePage,
+          activePage: d.activePage === doomed.id ? replacement : d.activePage,
         };
       });
-      history.current.delete(page.id);
       resetPageView();
       setBusy(false);
       closeSheet("pageMenu");
       notify(
+        includeServer ? "Seite und Serverkopien gelöscht." : "Seite gelöscht.",
+        "success",
         includeServer
-          ? "Seite und Serverkopien gelöscht."
-          : "Seite auf diesem Gerät gelöscht.",
+          ? undefined
+          : {
+              label: "Rückgängig",
+              run: () =>
+                update((d) => {
+                  const book = d.notebooks.find((n) => n.id === home);
+                  if (!book || book.pages.some((p) => p.id === doomed.id))
+                    return d;
+                  const pages = [...book.pages];
+                  pages.splice(Math.min(index, pages.length), 0, doomed);
+                  return {
+                    ...mapNotebook(d, home, (n) => ({
+                      ...n,
+                      pages,
+                      lastPageId: doomed.id,
+                    })),
+                    ...(d.activeNotebook === home
+                      ? { activePage: doomed.id }
+                      : {}),
+                  };
+                }),
+            },
       );
+      if (includeServer) history.current.delete(doomed.id);
     } catch {
       setError(
-        "Serverkopien konnten nicht vollständig gelöscht werden. Die Seite bleibt hier. Versuche es erneut.",
+        "Serverkopien nicht gelöscht. Die Seite bleibt. Erneut versuchen.",
       );
     } finally {
       setBusy(false);
@@ -613,69 +656,65 @@ export default function App() {
 
   if (store.accountRequired || accountChanged) {
     return (
-      <main className="load-error">
-        <Logo />
-        <h1>Inkloop</h1>
-        <p>
-          {accountChanged
-            ? "Das ChatGPT-Konto wurde gewechselt."
-            : "Melde dich mit deinem ChatGPT-Konto an."}
-        </p>
+      <main className="screen">
+        <Logo size={48} />
+        <h1>{accountChanged ? "Konto gewechselt" : "Bei ChatGPT anmelden"}</h1>
+        <p>Inkloop nutzt dein ChatGPT-Konto für den privaten Speicher.</p>
         <a
           className="primary"
           href={accountChanged ? "/" : "/signin-with-chatgpt?return_to=%2F"}
           target="_top"
         >
-          {accountChanged ? "Inkloop neu öffnen" : "Mit ChatGPT anmelden"}
+          {accountChanged ? "Neu öffnen" : "Anmelden"}
         </a>
       </main>
     );
   }
   if (store.loadError)
     return (
-      <div className="load-error">
-        <Logo />
-        <h1>Lernhefte konnten nicht geladen werden</h1>
+      <main className="screen">
+        <Logo size={48} />
+        <h1>Lernhefte nicht geladen</h1>
         <p>
-          Inkloop konnte den lokalen Speicher nicht öffnen. Bestehende Daten
-          wurden nicht überschrieben.
+          Der Speicher liess sich nicht öffnen. Deine Daten wurden nicht
+          verändert.
         </p>
-        <p className="muted">{store.loadError}</p>
-        <button
-          className="secondary"
-          onClick={async () => {
-            try {
-              if (!store.workspace.current) return;
-              const raw = await readStoredData(store.workspace.current);
-              if (!raw) throw new Error();
-              download(
-                new Blob([JSON.stringify(raw)], { type: "application/json" }),
-                "inkloop-notfallsicherung.json",
-              );
-            } catch {
-              store.setLoadError(
-                "Auch die Notfallsicherung konnte nicht gelesen werden. Bitte Website-Daten nicht löschen.",
-              );
-            }
-          }}
-        >
-          Vorhandene Daten als Notfallsicherung laden
-        </button>
-        <button className="primary" onClick={() => location.reload()}>
-          Erneut versuchen
-        </button>
-        <p className="muted">
-          Bitte Safari regulär öffnen und prüfen, ob Website-Speicher verfügbar
-          ist.
-        </p>
-      </div>
+        <p className="muted small">{store.loadError}</p>
+        <div className="screen-actions">
+          <button className="primary" onClick={() => location.reload()}>
+            Erneut versuchen
+          </button>
+          <button
+            className="secondary"
+            onClick={async () => {
+              try {
+                if (!store.workspace.current) return;
+                const raw = await readStoredData(store.workspace.current);
+                if (!raw) throw new Error();
+                download(
+                  new Blob([JSON.stringify(raw)], {
+                    type: "application/json",
+                  }),
+                  "inkloop-notfallsicherung.json",
+                );
+              } catch {
+                store.setLoadError(
+                  "Auch die Notfallsicherung liess sich nicht lesen. Website-Daten bitte nicht löschen.",
+                );
+              }
+            }}
+          >
+            Notfallsicherung laden
+          </button>
+        </div>
+      </main>
     );
   if (!data)
     return (
-      <div className="loading">
-        <LoaderCircle className="spin" size={24} />
-        <span>Lernhefte werden geladen</span>
-      </div>
+      <main className="screen" aria-busy="true">
+        <LoaderCircle className="spin" />
+        <p className="muted">Lernhefte werden geladen</p>
+      </main>
     );
 
   const chatUrl =
@@ -685,15 +724,18 @@ export default function App() {
   const h = page ? history.current.get(page.id) : undefined;
   void historyVersion;
   const banner = (saving === "error" || externalEdit) && (
-    <div className="error-banner" role="alert">
-      <CircleAlert size={17} aria-hidden="true" />
+    <div className="banner" role="alert">
+      <CircleAlert aria-hidden="true" />
       <span>
         {externalEdit
-          ? "Inkloop wurde in einem anderen Fenster geändert. Lade neu, bevor du weiterschreibst."
-          : `Speichern fehlgeschlagen. ${store.saveError} Bitte eine Sicherung herunterladen.`}
+          ? "In einem anderen Fenster geändert."
+          : "Nicht gespeichert."}
       </span>
-      <button onClick={externalEdit ? () => location.reload() : backup}>
-        {externalEdit ? "Neu laden" : "Sicherung herunterladen"}
+      <button
+        className="secondary"
+        onClick={externalEdit ? () => location.reload() : backup}
+      >
+        {externalEdit ? "Neu laden" : "Sicherung laden"}
       </button>
     </div>
   );
@@ -704,6 +746,29 @@ export default function App() {
     if (target) navigatePage(target.id, direction);
     else notify(direction < 0 ? "Erste Seite" : "Letzte Seite", "info");
   };
+  const pageIndex =
+    notebook && page ? notebook.pages.findIndex((p) => p.id === page.id) : 0;
+  const status = !online ? (
+    <span className="status" role="status">
+      <CloudOff aria-hidden="true" />
+      <span>Offline</span>
+    </span>
+  ) : saving === "error" ? (
+    <button className="status status-error" onClick={backup}>
+      <CircleAlert aria-hidden="true" />
+      <span>Nicht gespeichert</span>
+    </button>
+  ) : showSpinner ? (
+    <span className="status" role="status">
+      <LoaderCircle className="spin" aria-hidden="true" />
+      <span>Speichert</span>
+    </span>
+  ) : (
+    <span className="visually-hidden" role="status">
+      {saving === "saving" ? "Wird gespeichert" : "Gespeichert"}
+    </span>
+  );
+  const answered = submission && submissionState(submission) === "answered";
 
   return (
     <>
@@ -732,318 +797,228 @@ export default function App() {
           onSettings={() => open("settings")}
         />
       ) : (
-        <>
+        <main className="editor">
+          <header className="topbar">
+            <div className="bar-start">
+              <button
+                className="icon-button back"
+                aria-label="Alle Lernhefte"
+                onClick={() => {
+                  setSidebar(false);
+                  setInLibrary(true);
+                }}
+              >
+                <ChevronLeft />
+                <span>Lernhefte</span>
+              </button>
+              <IconButton
+                label="Seiten"
+                active={sidebar}
+                onClick={() => setSidebar(!sidebar)}
+              >
+                <PanelLeft />
+              </IconButton>
+              <span className="title" title={notebook.name}>
+                <strong>{notebook.name}</strong>
+                <small>
+                  {page.title}
+                  <span className="title-count">
+                    {pageIndex + 1}/{notebook.pages.length}
+                  </span>
+                </small>
+              </span>
+              <IconButton
+                label="Seitenoptionen"
+                onClick={() => open("pageMenu")}
+                disabled={externalEdit}
+              >
+                <MoreHorizontal />
+              </IconButton>
+            </div>
+            <InkTools
+              tool={tool}
+              color={color}
+              width={width}
+              light={light}
+              inert={externalEdit}
+              canUndo={!!h?.past.length}
+              canRedo={!!h?.future.length}
+              onTool={setTool}
+              onColor={setColor}
+              onWidth={setWidth}
+              onUndo={() => undo()}
+              onRedo={() => undo(true)}
+            />
+            <div className="bar-end">
+              {status}
+              <button
+                className={`icon-button panel-toggle ${answered ? "has-feedback" : ""}`}
+                aria-label="Lernbereich"
+                aria-expanded={panelOpen}
+                aria-controls="learning-panel"
+                title="Lernbereich"
+                ref={panelToggle}
+                onClick={() =>
+                  panelOpen ? closeLearningPanel() : setPanelOpen(true)
+                }
+              >
+                <PanelRight />
+                <span>Lernbereich</span>
+              </button>
+              <button
+                className="primary submit-button"
+                aria-label="Antwort abgeben"
+                disabled={!page.strokes.length || busy || externalEdit}
+                onClick={prepareSubmission}
+              >
+                {busy ? <LoaderCircle className="spin" /> : <ArrowUpRight />}
+                Abgeben
+              </button>
+            </div>
+          </header>
+          {banner}
+          <div
+            className={`workspace ${panelOpen ? "panel-open" : ""}`}
+            inert={externalEdit}
+          >
+            <section
+              className="writing-area"
+              aria-label="Lernheft"
+              inert={sidebar || (compact && panelOpen)}
+            >
+              <div
+                className={`paper-scroll ${turn ? `turn-${turn > 0 ? "next" : "previous"}` : ""}`}
+                key={page.id}
+              >
+                <div className="paper-holder">
+                  <InkCanvas
+                    key={page.id}
+                    strokes={page.strokes}
+                    onChange={changeInk}
+                    onStrokeActive={store.strokeActivity}
+                    tool={tool}
+                    color={color}
+                    light={light}
+                    width={width}
+                    onPageSwipe={turnPage}
+                    paper={page.paper}
+                    zoom={zoom}
+                  />
+                </div>
+              </div>
+            </section>
+            {compact && (
+              <button
+                className={`scrim panel-scrim ${panelOpen ? "visible" : ""}`}
+                aria-label="Lernbereich schliessen"
+                tabIndex={-1}
+                aria-hidden={!panelOpen}
+                onClick={closeLearningPanel}
+              />
+            )}
+            {(compact || panelOpen) && (
+              <LearningPanel
+                panelRef={learningPanel}
+                data={data}
+                page={page}
+                submission={submission}
+                tab={tab}
+                open={panelOpen}
+                inert={sidebar || !panelOpen}
+                busy={busy}
+                chatUrl={chatUrl}
+                connected={!!plugin}
+                onTab={setTab}
+                onEditTask={() => open("task")}
+                onImport={() => open("import")}
+                onCopy={(text) => void copyText(text)}
+                onEditSubmission={(patch) =>
+                  submission &&
+                  update((d) =>
+                    mapSubmission(d, page.id, submission.id, (s) => ({
+                      ...s,
+                      ...patch,
+                    })),
+                  )
+                }
+                onSolveNext={(task) => addPage(task)}
+                onSelectSubmission={setSelectedSubmission}
+                onHandoff={(s) =>
+                  void showHandoff(
+                    notebook,
+                    page.id,
+                    s,
+                    s.handoff ?? {
+                      subject: notebook.subject,
+                      language: page.language ?? notebook.language,
+                      samples: [],
+                      sent: false,
+                    },
+                    !s.handoff?.sent,
+                  )
+                }
+                onProvider={(provider) => patchSettings({ provider })}
+                onLinkChat={() => open("settings")}
+              />
+            )}
+          </div>
           <button
-            className={`sidebar-scrim ${sidebar ? "visible" : ""}`}
+            className={`scrim sidebar-scrim ${sidebar ? "visible" : ""}`}
             aria-label="Seiten schliessen"
             tabIndex={-1}
             aria-hidden={!sidebar}
             onClick={() => setSidebar(false)}
           />
           <aside
-            className={`sidebar ${sidebar ? "visible" : ""}`}
+            ref={pagesDrawer}
+            className={`drawer pages ${sidebar ? "visible" : ""}`}
             aria-label="Seiten"
             aria-hidden={!sidebar}
             inert={!sidebar}
           >
-            <div className="drawer-heading">
+            <header className="drawer-heading">
               <h2>Seiten</h2>
-              <IconButton
-                label="Seitenleiste schliessen"
-                onClick={() => setSidebar(false)}
-              >
-                <X size={20} />
+              <IconButton label="Neue Seite" onClick={() => addPage()}>
+                <Plus />
               </IconButton>
-            </div>
-            <div className="pages-list">
-              {notebook.pages.map((p, i) => (
-                <button
-                  className={`page-link ${p.id === page.id ? "selected" : ""}`}
-                  key={p.id}
-                  aria-current={p.id === page.id ? "page" : undefined}
-                  onClick={() => {
-                    const from = notebook.pages.findIndex(
-                      (x) => x.id === page.id,
-                    );
-                    if (p.id !== page.id) navigatePage(p.id, i > from ? 1 : -1);
-                    setSidebar(false);
-                  }}
-                >
-                  <span className="page-thumb">
-                    <Miniature
-                      strokes={p.strokes}
-                      light={light}
-                      live={sidebar}
-                    />
-                    <span>{String(i + 1).padStart(2, "0")}</span>
-                  </span>
-                  <span className="page-link-label">
-                    {p.title}
-                    {p.submissions.some((s) => s.feedback) && (
-                      <small>Mit Feedback</small>
-                    )}
-                  </span>
-                </button>
-              ))}
-            </div>
-            <button className="text-button new-page" onClick={() => addPage()}>
-              <Plus size={16} /> Neue Seite
-            </button>
-          </aside>
-          <main className="app-main">
-            <header className="topbar">
-              <div className="editor-navigation">
-                <button
-                  className="icon-button library-back"
-                  aria-label="Alle Lernhefte"
-                  onClick={() => {
-                    setSidebar(false);
-                    setInLibrary(true);
-                  }}
-                >
-                  <ChevronLeft size={20} />
-                  <span>Lernhefte</span>
-                </button>
-                <button
-                  className="icon-button"
-                  aria-label="Seiten"
-                  aria-expanded={sidebar}
-                  onClick={() => setSidebar(!sidebar)}
-                >
-                  <PanelLeft size={20} />
-                </button>
-                <span className="editor-notebook" title={notebook.name}>
-                  {notebook.name}
-                  <small>
-                    {page.title} ·{" "}
-                    {notebook.pages.findIndex((p) => p.id === page.id) + 1}/
-                    {notebook.pages.length}
-                  </small>
-                </span>
-              </div>
-              <div className="editor-tools">
-                <div
-                  className="ink-toolbar liquid-ui"
-                  ref={glassToolbar}
-                  role="toolbar"
-                  aria-label="Schreibwerkzeuge"
-                  inert={sidebar || externalEdit || (compact && panelOpen)}
-                >
-                  <div className="toolbar-group">
-                    {(
-                      [
-                        ["pen", "Stift", PenLine],
-                        ["marker", "Textmarker", Highlighter],
-                        ["eraser", "Radierer", Eraser],
-                        ["line", "Gerade Linie", Minus],
-                      ] as const
-                    ).map(([t, label, Icon]) => (
-                      <IconButton
-                        key={t}
-                        label={label}
-                        active={tool === t}
-                        onClick={() => setTool(t)}
-                      >
-                        <Icon size={20} />
-                      </IconButton>
-                    ))}
-                  </div>
-                  <span className="toolbar-divider" />
-                  <div className="ink-colors" aria-label="Stiftfarbe">
-                    {INK_PALETTE.map((c, i) => (
-                      <button
-                        key={c}
-                        className={`color-button ${c === color ? "selected" : ""}`}
-                        style={
-                          {
-                            "--ink": displayInkColor(c, light),
-                          } as CSSProperties
-                        }
-                        aria-label={`Farbe ${["Hell", "Grau", "Blau"][i]}`}
-                        aria-pressed={c === color}
-                        onClick={() => {
-                          setColor(c);
-                          if (tool === "eraser") setTool("pen");
-                        }}
-                      />
-                    ))}
-                  </div>
-                  <span className="toolbar-divider" />
-                  <button
-                    className="width-button"
-                    aria-label={`Strichbreite ${width}. Zum Wechseln tippen.`}
-                    onClick={() =>
-                      setWidth(width === 2.5 ? 4 : width === 4 ? 1.5 : 2.5)
-                    }
-                  >
-                    <span style={{ height: width * 1.5, width: width * 1.5 }} />
-                  </button>
-                  <span className="toolbar-divider" />
-                  <IconButton
-                    label="Rückgängig"
-                    disabled={!h?.past.length}
-                    onClick={() => undo()}
-                  >
-                    <Undo2 size={18} />
-                  </IconButton>
-                  <IconButton
-                    label="Wiederholen"
-                    disabled={!h?.future.length}
-                    onClick={() => undo(true)}
-                  >
-                    <Redo2 size={18} />
-                  </IconButton>
-                </div>
-                <IconButton
-                  label="Seitenoptionen"
-                  onClick={() => open("pageMenu")}
-                  disabled={externalEdit || sidebar || (compact && panelOpen)}
-                >
-                  <MoreHorizontal size={22} />
-                </IconButton>
-              </div>
-              <div className="topbar-actions liquid-ui" ref={glassActions}>
-                <span
-                  role="status"
-                  className={`save-state ${saving === "error" ? "error" : ""}`}
-                  title={saving === "saved" ? "Gespeichert" : "Speicherstatus"}
-                >
-                  {saving === "error" ? (
-                    <CircleAlert size={16} />
-                  ) : showSpinner ? (
-                    <LoaderCircle size={16} className="spin" />
-                  ) : (
-                    <CheckCheck size={17} />
-                  )}
-                  <span className="visually-hidden">
-                    {saving === "saving"
-                      ? "Wird gespeichert"
-                      : saving === "error"
-                        ? "Nicht gespeichert"
-                        : "Gespeichert"}
-                  </span>
-                </span>
-                <button
-                  className={`panel-toggle secondary ${submission?.feedback ? "has-feedback" : ""}`}
-                  aria-label="Lernbereich"
-                  aria-expanded={panelOpen}
-                  aria-controls="learning-panel"
-                  ref={panelToggle}
-                  onClick={() =>
-                    panelOpen ? closeLearningPanel() : setPanelOpen(true)
-                  }
-                >
-                  <FileText size={17} />
-                  <span>Lernbereich</span>
-                </button>
-                <button
-                  className="primary submit-button"
-                  aria-label="Antwort abgeben"
-                  disabled={!page.strokes.length || busy || externalEdit}
-                  onClick={prepareSubmission}
-                >
-                  {busy ? (
-                    <LoaderCircle size={16} className="spin" />
-                  ) : (
-                    <ArrowUpRight size={17} />
-                  )}
-                  {plugin ? "An ChatGPT" : "Abgeben"}
-                </button>
-              </div>
             </header>
-            {banner}
-            <div
-              className={`workspace ${panelOpen ? "" : "panel-hidden"}`}
-              inert={externalEdit}
-            >
-              <section
-                className="writing-area"
-                aria-label="Lernheft"
-                inert={sidebar || (compact && panelOpen)}
-              >
-                <div className="canvas-shell">
-                  <div
-                    className={`paper-scroll ${turn ? `turn-${turn > 0 ? "next" : "previous"}` : ""}`}
-                    key={page.id}
+            <ol className="page-list">
+              {notebook.pages.map((p, i) => (
+                <li key={p.id}>
+                  <button
+                    className={`page-row ${p.id === page.id ? "selected" : ""}`}
+                    aria-current={p.id === page.id ? "page" : undefined}
+                    onClick={() => {
+                      if (p.id !== page.id)
+                        navigatePage(p.id, i > pageIndex ? 1 : -1);
+                      setSidebar(false);
+                    }}
                   >
-                    <div className="paper-holder">
-                      <InkCanvas
-                        key={page.id}
-                        strokes={page.strokes}
-                        onChange={changeInk}
-                        onStrokeActive={store.strokeActivity}
-                        tool={tool}
-                        color={color}
+                    <span
+                      className={`page-thumb paper-${p.paper}`}
+                      aria-hidden="true"
+                    >
+                      <Miniature
+                        strokes={p.strokes}
                         light={light}
-                        width={width}
-                        onPageSwipe={turnPage}
-                        paper={page.paper}
-                        zoom={zoom}
+                        live={sidebar}
                       />
-                    </div>
-                  </div>
-                </div>
-              </section>
-              {(compact || panelOpen) && (
-                <>
-                  {compact && (
-                    <button
-                      className="panel-scrim"
-                      aria-label="Lernbereich schliessen"
-                      disabled={!panelOpen}
-                      aria-hidden={!panelOpen}
-                      tabIndex={-1}
-                      onClick={closeLearningPanel}
-                    />
-                  )}
-                  <LearningPanel
-                    panelRef={learningPanel}
-                    data={data}
-                    page={page}
-                    submission={submission}
-                    tab={tab}
-                    open={panelOpen}
-                    inert={sidebar || !panelOpen}
-                    busy={busy}
-                    chatLinked={!!chatUrl}
-                    connected={!!plugin}
-                    onTab={setTab}
-                    onEditTask={() => open("task")}
-                    onImport={() => open("import")}
-                    onCopy={(text) => void copyText(text)}
-                    onEditSubmission={(patch) =>
-                      submission &&
-                      update((d) =>
-                        mapSubmission(d, page.id, submission.id, (s) => ({
-                          ...s,
-                          ...patch,
-                        })),
-                      )
-                    }
-                    onSolveNext={(task) => addPage(task)}
-                    onSelectSubmission={setSelectedSubmission}
-                    onHandoff={(s) =>
-                      void showHandoff(
-                        notebook,
-                        page.id,
-                        s,
-                        s.handoff ?? {
-                          subject: notebook.subject,
-                          language: page.language ?? notebook.language,
-                          samples: [],
-                          sent: false,
-                        },
-                        !s.handoff?.sent,
-                      )
-                    }
-                    onProvider={(provider) => patchSettings({ provider })}
-                    onLinkChat={() => open("settings")}
-                  />
-                </>
-              )}
-            </div>
-          </main>
-        </>
+                    </span>
+                    <span className="page-row-text">
+                      <strong>{p.title}</strong>
+                      <small>
+                        {i + 1}
+                        {p.submissions.some((s) => s.feedback) && (
+                          <span className="page-feedback">Feedback</span>
+                        )}
+                      </small>
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ol>
+          </aside>
+        </main>
       )}
       {sheet === "profile" && (
         <ProfileSheet
@@ -1052,7 +1027,7 @@ export default function App() {
           onSave={(samples) => {
             update((d) => ({ ...d, samples, onboardingDone: true }));
             close();
-            notify("Dein Schriftprofil ist gespeichert.");
+            notify("Schriftprofil gespeichert.");
           }}
         />
       )}
@@ -1129,7 +1104,7 @@ export default function App() {
                 ? { chatUrl: url }
                 : { claudeUrl: url },
             );
-            notify("Chat-Link gespeichert.");
+            notify(url ? "Chat-Link gesichert." : "Chat-Link entfernt.");
           }}
           onBackup={backup}
           onPickRestore={() => importFile.current?.click()}
@@ -1139,7 +1114,7 @@ export default function App() {
             history.current.clear();
             resetPageView();
             close();
-            notify("Sicherung wiederhergestellt.");
+            notify("Sicherung geladen.");
           }}
           onHelp={() => open("help")}
           notify={notify}
@@ -1191,7 +1166,7 @@ export default function App() {
           onClear={() => {
             changeInk([]);
             close();
-            notify("Seite geleert.", "info", {
+            notify("Seite geleert.", "success", {
               label: "Rückgängig",
               run: () => undo(),
             });

@@ -31,8 +31,19 @@ export type Submission = {
     language: Notebook["language"];
     samples: Sample[];
     sent: boolean;
+    /** Last upload to the plugin bridge failed; cleared once it succeeds. */
+    failed?: boolean;
   };
 };
+
+export type SubmissionState = "local" | "sent" | "failed" | "answered";
+/** One unambiguous state per submission, shared by every view. */
+export function submissionState(s: Submission): SubmissionState {
+  if (s.transcription || s.feedback) return "answered";
+  if (s.handoff?.sent) return "sent";
+  if (s.handoff?.failed) return "failed";
+  return "local";
+}
 export type Notebook = {
   id: string;
   name: string;
@@ -572,6 +583,8 @@ function validSubmission(s: unknown): s is Submission {
         string(s.handoff.subject, 150) &&
         (s.handoff.language === "de" || s.handoff.language === "en") &&
         typeof s.handoff.sent === "boolean" &&
+        (s.handoff.failed === undefined ||
+          typeof s.handoff.failed === "boolean") &&
         Array.isArray(s.handoff.samples) &&
         s.handoff.samples.length <= 50 &&
         s.handoff.samples.every(validSample)))
