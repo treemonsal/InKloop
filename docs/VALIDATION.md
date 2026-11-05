@@ -34,5 +34,5 @@ DOM tests use simulated canvas and clipboard APIs. Server tests use an in-memory
 1. Inkloop über das Symbol auf dem Home Bildschirm öffnen. Im FRW Lernheft eine Testseite mit der Aufgabe «Kaufe Büromaterial für CHF 120 auf Rechnung. Buche den Geschäftsfall.» anlegen.
 2. Eine Tabelle mit Soll, Haben und Betrag mit dem Apple Pencil schreiben. Prüfen, ob der Handballen keine Striche setzt und die Tabelle vollständig im Bild sichtbar ist.
 3. Flugmodus aktivieren und die Antwort abgeben. Inkloop erneut öffnen und prüfen, ob die Abgabe in der Liste lokal gespeichert ist.
-4. Wieder online gehen. Bei der Abgabe «Erneut an ChatGPT senden» wählen. Den Auftrag in den bestehenden Chat mit aktivem Inkloop Plugin kopieren. Prüfen, ob nach der Rückmeldung genau eine Abgabe mit Abschrift und Feedback vorhanden ist.
+4. Wieder online gehen. Bei der Abgabe (Zustand «Lokal gespeichert» oder «Übertragung fehlgeschlagen») «An ChatGPT senden» bzw. «Erneut senden» wählen. Den Auftrag in den bestehenden Chat mit aktivem Inkloop Plugin kopieren. Prüfen, ob nach der Rückmeldung genau eine Abgabe mit Abschrift und Feedback vorhanden ist.
 5. Nur auf der Testseite die Option zum Löschen mit Serverkopien ausführen. Im Chat prüfen, ob dieselbe Abgabe über ihre ID nicht mehr aus Inkloop geladen werden kann.

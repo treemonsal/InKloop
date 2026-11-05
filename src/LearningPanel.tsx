@@ -1,6 +1,7 @@
 import {
   ArrowDownToLine,
   Copy,
+  ExternalLink,
   FileText,
   Link2,
   MessageSquareText,
@@ -11,11 +12,12 @@ import {
 import type { CSSProperties, KeyboardEvent, RefObject } from "react";
 import {
   MAX_TEXT_LENGTH,
+  submissionState,
   type AppData,
   type Page,
   type Submission,
 } from "./model";
-import { RichText } from "./ui";
+import { RichText, StateLabel } from "./ui";
 
 export type PanelTab = "task" | "text" | "feedback";
 const TABS: PanelTab[] = ["task", "text", "feedback"];
@@ -40,7 +42,7 @@ export function LearningPanel({
   open,
   inert,
   busy,
-  chatLinked,
+  chatUrl,
   connected,
   onTab,
   onEditTask,
@@ -61,8 +63,9 @@ export function LearningPanel({
   open: boolean;
   inert: boolean;
   busy: boolean;
-  chatLinked: boolean;
-  /** ChatGPT selected and the plugin bridge answers. */
+  /** The saved link, if any. It never implies a live connection. */
+  chatUrl: string;
+  /** ChatGPT selected and the plugin bridge answers right now. */
   connected: boolean;
   onTab: (tab: PanelTab) => void;
   onEditTask: () => void;
@@ -75,11 +78,7 @@ export function LearningPanel({
   onProvider: (provider: AppData["settings"]["provider"]) => void;
   onLinkChat: () => void;
 }) {
-  const filled: Record<PanelTab, boolean> = {
-    task: !!page.task,
-    text: !!submission?.transcription,
-    feedback: !!submission?.feedback,
-  };
+  const chatgpt = data.settings.provider === "chatgpt";
   const keys = (e: KeyboardEvent) => {
     if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;
     e.preventDefault();
@@ -98,26 +97,30 @@ export function LearningPanel({
   const empty = (
     Icon: typeof FileText,
     title: string,
-    hint: string,
-    action?: { label: string; run: () => void },
+    action?: { label: string; icon: typeof Plus; run: () => void },
   ) => (
-    <div className="panel-empty">
-      <Icon size={26} strokeWidth={1.5} aria-hidden="true" />
+    <div className="empty">
+      <Icon strokeWidth={1.5} aria-hidden="true" />
       <p>{title}</p>
-      <small>{hint}</small>
       {action && (
         <button className="secondary" onClick={action.run}>
-          {action.label === "Aufgabe einfügen" ? (
-            <Plus size={16} />
-          ) : (
-            <ArrowDownToLine size={16} />
-          )}{" "}
-          {action.label}
+          <action.icon /> {action.label}
         </button>
       )}
     </div>
   );
-  const plugin = data.settings.provider === "chatgpt";
+  const importAction = {
+    label: "KI-Antwort übernehmen",
+    icon: ArrowDownToLine,
+    run: onImport,
+  };
+  const state = submission && submissionState(submission);
+  const sendLabel =
+    state === "failed"
+      ? "Erneut senden"
+      : state === "sent" || state === "answered"
+        ? "Übergabe öffnen"
+        : "An ChatGPT senden";
   return (
     <aside
       id="learning-panel"
@@ -128,7 +131,7 @@ export function LearningPanel({
       inert={inert}
     >
       <div
-        className="panel-tabs segmented"
+        className="segmented"
         role="tablist"
         aria-label="Lernansicht"
         onKeyDown={keys}
@@ -147,166 +150,157 @@ export function LearningPanel({
             onClick={() => onTab(t)}
           >
             {LABELS[t]}
-            {filled[t] && <span className="tab-dot" aria-hidden="true" />}
+            {t === "feedback" && submission?.feedback && (
+              <span className="tab-dot" aria-hidden="true" />
+            )}
           </button>
         ))}
       </div>
-      <div
-        className="panel-content"
-        id="learning-content"
-        role="tabpanel"
-        aria-labelledby={`tab-${tab}`}
-        key={tab}
-      >
-        {tab === "task" &&
-          (page.task ? (
-            <div className="task-content">
-              <RichText text={page.task} />
-              <button className="text-button small" onClick={onEditTask}>
-                <PenLine size={14} /> Bearbeiten
-              </button>
-            </div>
-          ) : (
-            empty(
-              FileText,
-              "Keine Aufgabe",
-              connected
-                ? "Füge eine Aufgabe ein oder lass sie dir von ChatGPT schicken."
-                : "Füge die Aufgabe aus deinem Chat ein.",
-              { label: "Aufgabe einfügen", run: onEditTask },
-            )
-          ))}
-        {tab === "text" &&
-          (submission?.transcription ? (
-            <div className="answer-card">
-              <div className="section-label">
-                Abschrift
-                <button
-                  className="icon-button"
-                  aria-label="Abschrift kopieren"
-                  onClick={() => onCopy(submission.transcription)}
-                >
-                  <Copy size={14} />
-                </button>
-              </div>
-              <RichText text={submission.transcription} />
-              <details className="edit-details">
-                <summary>Abschrift korrigieren</summary>
-                <textarea
-                  aria-label="Abschrift korrigieren"
-                  maxLength={MAX_TEXT_LENGTH}
-                  value={submission.transcription}
-                  onChange={(e) =>
-                    onEditSubmission({
-                      transcription: e.target.value.slice(0, MAX_TEXT_LENGTH),
-                    })
-                  }
-                />
-                <small>Deine Korrektur wird lokal gespeichert.</small>
-              </details>
-            </div>
-          ) : (
-            empty(
-              ScanText,
-              "Keine Abschrift",
-              submission
-                ? "Sobald dein Chat die Abgabe gelesen hat, erscheint hier, was er erkannt hat."
-                : "Gib deine Lösung ab. Dein Chat schreibt ab, was er lesen konnte.",
-              submission
-                ? { label: "KI-Antwort übernehmen", run: onImport }
-                : undefined,
-            )
-          ))}
-        {tab === "feedback" &&
-          (submission?.feedback ? (
-            <>
-              <div className="answer-card">
-                <div className="section-label">
-                  Feedback
-                  <button
-                    className="icon-button"
-                    aria-label="Feedback kopieren"
-                    onClick={() => onCopy(submission.feedback)}
-                  >
-                    <Copy size={14} />
+      <div className="panel-scroll">
+        <div
+          className="panel-content"
+          id="learning-content"
+          role="tabpanel"
+          aria-labelledby={`tab-${tab}`}
+          key={tab}
+        >
+          {tab === "task" &&
+            (page.task ? (
+              <section className="reading">
+                <RichText text={page.task} />
+                <div className="reading-actions">
+                  <button className="text-button" onClick={onEditTask}>
+                    <PenLine /> Bearbeiten
                   </button>
                 </div>
-                <RichText text={submission.feedback} />
-              </div>
-              {submission.nextTask && (
-                <div className="next-task">
-                  <span className="eyebrow">Nächste Aufgabe</span>
-                  <RichText text={submission.nextTask} />
+              </section>
+            ) : (
+              empty(FileText, "Keine Aufgabe", {
+                label: "Aufgabe einfügen",
+                icon: Plus,
+                run: onEditTask,
+              })
+            ))}
+          {tab === "text" &&
+            (submission?.transcription ? (
+              <section className="reading">
+                <RichText text={submission.transcription} />
+
+                <div className="reading-actions">
+                  <button
+                    className="text-button"
+                    aria-label="Abschrift kopieren"
+                    onClick={() => onCopy(submission.transcription)}
+                  >
+                    <Copy /> Kopieren
+                  </button>
+                  <details className="edit-details">
+                    <summary>
+                      <PenLine /> Korrigieren
+                    </summary>
+                    <textarea
+                      aria-label="Abschrift korrigieren"
+                      maxLength={MAX_TEXT_LENGTH}
+                      value={submission.transcription}
+                      onChange={(e) =>
+                        onEditSubmission({
+                          transcription: e.target.value.slice(
+                            0,
+                            MAX_TEXT_LENGTH,
+                          ),
+                        })
+                      }
+                    />
+                  </details>
+                </div>
+              </section>
+            ) : (
+              empty(
+                ScanText,
+                submission ? "Noch keine Abschrift" : "Noch nichts abgegeben",
+                submission ? importAction : undefined,
+              )
+            ))}
+          {tab === "feedback" &&
+            (submission?.feedback ? (
+              <>
+                <section className="reading">
+                  <RichText text={submission.feedback} />
+                  <div className="reading-actions">
+                    <button
+                      className="text-button"
+                      aria-label="Feedback kopieren"
+                      onClick={() => onCopy(submission.feedback)}
+                    >
+                      <Copy /> Kopieren
+                    </button>
+                  </div>
+                </section>
+                {submission.nextTask && (
+                  <section className="next-task">
+                    <h3>Nächste Aufgabe</h3>
+                    <RichText text={submission.nextTask} />
+                    <button
+                      className="secondary"
+                      onClick={() => onSolveNext(submission.nextTask)}
+                    >
+                      <Plus /> Auf neuer Seite lösen
+                    </button>
+                  </section>
+                )}
+              </>
+            ) : (
+              empty(
+                MessageSquareText,
+                submission ? "Noch kein Feedback" : "Noch nichts abgegeben",
+                submission ? importAction : undefined,
+              )
+            ))}
+        </div>
+        {page.submissions.length > 0 && (
+          <section className="submissions" aria-label="Abgaben">
+            <h3>Abgaben</h3>
+            <ul>
+              {[...page.submissions].reverse().map((s, i) => (
+                <li key={s.id}>
+                  <button
+                    className={`submission ${s.id === submission?.id ? "selected" : ""}`}
+                    aria-current={s.id === submission?.id ? "true" : undefined}
+                    onClick={() => onSelectSubmission(s.id)}
+                  >
+                    <span className="submission-name">
+                      Abgabe {page.submissions.length - i}
+                      <small>{time(s.createdAt)}</small>
+                    </span>
+                    <StateLabel state={submissionState(s)} />
+                  </button>
+                </li>
+              ))}
+            </ul>
+            {submission && (
+              <div className="submission-actions">
+                {chatgpt && (
                   <button
                     className="secondary"
-                    onClick={() => onSolveNext(submission.nextTask)}
+                    disabled={busy}
+                    onClick={() => onHandoff(submission)}
                   >
-                    <Plus size={16} /> Auf neuer Seite lösen
+                    {sendLabel}
                   </button>
-                </div>
-              )}
-            </>
-          ) : (
-            empty(
-              MessageSquareText,
-              "Noch kein Feedback",
-              submission
-                ? connected
-                  ? "Die Antwort erscheint hier automatisch, sobald ChatGPT sie gespeichert hat."
-                  : "Kopiere die Antwort aus deinem Chat und übernimm sie hier."
-                : "Gib zuerst eine Lösung ab.",
-              submission
-                ? { label: "KI-Antwort übernehmen", run: onImport }
-                : undefined,
-            )
-          ))}
-        {page.submissions.length > 0 && (
-          <div className="submission-history">
-            <label htmlFor="submission-select">Abgaben auf dieser Seite</label>
-            <select
-              id="submission-select"
-              value={submission?.id || ""}
-              onChange={(e) => onSelectSubmission(e.target.value)}
-            >
-              {[...page.submissions].reverse().map((s, i) => (
-                <option value={s.id} key={s.id}>
-                  Abgabe {page.submissions.length - i} · {time(s.createdAt)}
-                  {s.feedback ? " · mit Feedback" : ""}
-                </option>
-              ))}
-            </select>
-            {submission && plugin && (
-              <div className="submission-status">
-                <small>
-                  {submission.handoff?.sent
-                    ? "Für ChatGPT bereitgestellt"
-                    : submission.handoff
-                      ? "Nur auf diesem Gerät"
-                      : "Sendestatus unbekannt"}
-                </small>
-                <button
-                  className="text-button small"
-                  disabled={busy}
-                  onClick={() => onHandoff(submission)}
-                >
-                  {submission.handoff?.sent
-                    ? "Übergabe öffnen"
-                    : "Erneut an ChatGPT senden"}
-                </button>
+                )}
+                {(submission.transcription || submission.feedback) && (
+                  <button className="text-button" onClick={onImport}>
+                    <ArrowDownToLine /> Andere Antwort übernehmen
+                  </button>
+                )}
               </div>
             )}
-            {submission &&
-              (submission.transcription || submission.feedback) && (
-                <button className="text-button small" onClick={onImport}>
-                  <ArrowDownToLine size={14} /> Andere Antwort übernehmen
-                </button>
-              )}
-          </div>
+          </section>
         )}
       </div>
-      <div className="panel-bottom">
-        <div className="chat-choice">
-          <span className="section-label">Chat</span>
+      <footer className="panel-footer">
+        <label className="chat-provider">
+          <span>Chat</span>
           <select
             aria-label="KI-Anbieter"
             value={data.settings.provider}
@@ -315,14 +309,31 @@ export function LearningPanel({
             }
           >
             <option value="chatgpt">ChatGPT</option>
-            <option value="claude">Claude (manuell)</option>
+            <option value="claude">Claude</option>
           </select>
+        </label>
+        <p className="connection">
+          <span
+            className={`dot ${chatgpt && connected ? "on" : ""}`}
+            aria-hidden="true"
+          />
+          {chatgpt
+            ? connected
+              ? "Plugin verbunden"
+              : "Plugin nicht erreichbar"
+            : "Manuelle Übergabe"}
+        </p>
+        <div className="chat-link">
+          {chatUrl && (
+            <a href={chatUrl} target="_blank" rel="noopener noreferrer">
+              <ExternalLink /> Chat öffnen
+            </a>
+          )}
+          <button className="text-button" onClick={onLinkChat}>
+            <Link2 /> {chatUrl ? "Link ändern" : "Chat-Link hinzufügen"}
+          </button>
         </div>
-        <button className="chat-link text-button small" onClick={onLinkChat}>
-          <Link2 size={13} />
-          {chatLinked ? "Chat ändern" : "Chat verknüpfen"}
-        </button>
-      </div>
+      </footer>
     </aside>
   );
 }
