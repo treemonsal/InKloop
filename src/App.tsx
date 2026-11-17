@@ -799,10 +799,16 @@ export default function App() {
               <span className="title" title={notebook.name}>
                 <strong>{notebook.name}</strong>
                 <small>
-                  {page.title}
-                  <span className="title-count">
-                    {pageIndex + 1}/{notebook.pages.length}
-                  </span>
+                  {page.title === `Seite ${pageIndex + 1}` ? (
+                    `Seite ${pageIndex + 1} von ${notebook.pages.length}`
+                  ) : (
+                    <>
+                      {page.title}
+                      <span className="title-count">
+                        {pageIndex + 1}/{notebook.pages.length}
+                      </span>
+                    </>
+                  )}
                 </small>
               </span>
               <IconButton
