@@ -68,6 +68,9 @@ export type AppData = {
   };
 };
 export const uid = () => crypto.randomUUID();
+/** Standardname einer Seite an Position n (ab 1). */
+export const pageTitle = (n: number) => `Seite ${n}`;
+
 export function newPage(title = "Neue Seite"): Page {
   return {
     id: uid(),
@@ -89,7 +92,7 @@ export function receiveTask(
   const target = data.notebooks.find((n) => n.id === notebookId);
   if (!target || target.pages.some((p) => p.id === eventId)) return data;
   const page = {
-    ...newPage(`Seite ${target.pages.length + 1}`),
+    ...newPage(pageTitle(target.pages.length + 1)),
     id: eventId,
     task,
   };

@@ -24,6 +24,7 @@ import {
   type Submission,
   newNotebook,
   newPage,
+  pageTitle,
   uid,
   buildPrompt,
   parseBackup,
@@ -351,7 +352,7 @@ export default function App() {
   };
   const addPage = (task = "") => {
     if (!notebook) return;
-    const p = { ...newPage(`Seite ${notebook.pages.length + 1}`), task };
+    const p = { ...newPage(pageTitle(notebook.pages.length + 1)), task };
     update((d) => ({
       ...mapNotebook(d, d.activeNotebook, (n) => ({
         ...n,
@@ -799,8 +800,8 @@ export default function App() {
               <span className="title" title={notebook.name}>
                 <strong>{notebook.name}</strong>
                 <small>
-                  {page.title === `Seite ${pageIndex + 1}` ? (
-                    `Seite ${pageIndex + 1} von ${notebook.pages.length}`
+                  {page.title === pageTitle(pageIndex + 1) ? (
+                    `${page.title} von ${notebook.pages.length}`
                   ) : (
                     <>
                       {page.title}
